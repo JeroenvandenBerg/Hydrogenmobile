@@ -6,6 +6,7 @@
 #include "../include/Config.h"
 #include "../include/SystemState.h"
 #include <Arduino.h>
+#include <FastLED.h>
 
 // Use the global state defined in main.cpp
 extern SystemState state;
@@ -277,8 +278,13 @@ void initWebServerSafe() {
         state.testMode = true;
         state.testSegmentStart = start;
         state.testSegmentEnd = end;
-        state.testSegmentIndex = start;
+        // force runTestMode() to (re)initialize and clear by using an out-of-range sentinel
+        state.testSegmentIndex = -1;
         state.testDirForward = dir;
+
+        // Immediately clear all LEDs so test starts from a blank strip
+        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
 
         request->redirect("/");
     });
@@ -286,6 +292,9 @@ void initWebServerSafe() {
     // Stop test handler
     server.on("/stoptest", HTTP_POST, [](AsyncWebServerRequest *request){
         state.testMode = false;
+        // Clear LEDs on exit from test for a clean state
+        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
         request->redirect("/");
     });
 

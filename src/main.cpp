@@ -193,28 +193,25 @@ void resetAllVariables() {
 
 void runTestMode() {
     static uint32_t previousMillis = 0;
-    static bool firstRun = true;
-    
-    // Clear all LEDs on first entry to test mode
-    if (firstRun) {
-        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+
+    // Initialize when entering test (sentinel set by /test handler)
+    if (state.testSegmentIndex < state.testSegmentStart || state.testSegmentIndex > state.testSegmentEnd) {
         state.testSegmentIndex = state.testDirForward ? state.testSegmentStart : state.testSegmentEnd;
-        firstRun = false;
         previousMillis = millis();
     }
-    
+
     // Run a simple running LED effect on the test segment
     if (millis() - previousMillis >= LED_DELAY) {
         previousMillis = millis();
-        
+
         // Clear the segment
         for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
             state.leds[i] = CRGB::Black;
         }
-        
+
         // Light up current position
         state.leds[state.testSegmentIndex] = CRGB::White;
-        
+
         // Move to next LED based on direction
         if (state.testDirForward) {
             state.testSegmentIndex++;
@@ -227,12 +224,5 @@ void runTestMode() {
                 state.testSegmentIndex = state.testSegmentEnd;
             }
         }
-    }
-    
-    // Reset firstRun when exiting test mode
-    if (!state.testMode) {
-        firstRun = true;
-        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
-        resetAllVariables();
     }
 }
