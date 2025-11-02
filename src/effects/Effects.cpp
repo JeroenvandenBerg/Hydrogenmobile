@@ -13,33 +13,51 @@
 // ---- Wind effect
 void updateWindEffect(SystemState &state, Timers &timers) {
     if (state.windOn) {
-        state.windSegment = EffectUtils::runSegmentDir(
-            state,
-            state.windSegmentStart,
-            state.windSegmentEnd,
-            WIND_COLOR_ACTIVE,
-            CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
-            LED_DELAY,
-            state.windSegment,
-            timers.previousMillisWind,
-            state.firstRunWind,
-            state.windDirForward
-        );
-        state.solarSegment = EffectUtils::runSegmentDir(
-            state,
-            state.solarSegmentStart,
-            state.solarSegmentEnd,
-            WIND_COLOR_ACTIVE,
-            CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
-            LED_DELAY,
-            state.solarSegment,
-            timers.previousMillisSolar,
-            state.firstRunSolar,
-            state.solarDirForward
-        );
+        // Wind segment
+        if (state.windEnabled) {
+            state.windSegment = EffectUtils::runSegmentDir(
+                state,
+                state.windSegmentStart,
+                state.windSegmentEnd,
+                WIND_COLOR_ACTIVE,
+                CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
+                LED_DELAY,
+                state.windSegment,
+                timers.previousMillisWind,
+                state.firstRunWind,
+                state.windDirForward
+            );
+        } else {
+            EffectUtils::clearRange(state, state.windSegmentStart, state.windSegmentEnd);
+            state.firstRunWind = true;
+            state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
+        }
 
-        if (state.windSegment == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd) ||
-            state.solarSegment == EffectUtils::terminalBound(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd)) {
+        // Solar segment
+        if (state.solarEnabled) {
+            state.solarSegment = EffectUtils::runSegmentDir(
+                state,
+                state.solarSegmentStart,
+                state.solarSegmentEnd,
+                WIND_COLOR_ACTIVE,
+                CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
+                LED_DELAY,
+                state.solarSegment,
+                timers.previousMillisSolar,
+                state.firstRunSolar,
+                state.solarDirForward
+            );
+        } else {
+            EffectUtils::clearRange(state, state.solarSegmentStart, state.solarSegmentEnd);
+            state.firstRunSolar = true;
+            state.solarSegment = EffectUtils::initialIndex(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd);
+        }
+
+        // Trigger electricity production if enabled and if at least one enabled source has reached terminal
+        bool windReachedTerminal = state.windEnabled && (state.windSegment == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
+        bool solarReachedTerminal = state.solarEnabled && (state.solarSegment == EffectUtils::terminalBound(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd));
+        
+        if (state.electricityProductionEnabled && (windReachedTerminal || solarReachedTerminal)) {
             state.electricityProductionOn = true;
         }
     } else {
@@ -56,7 +74,7 @@ void updateWindEffect(SystemState &state, Timers &timers) {
 
 // ---- Electricity production effect
 void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
-    if (state.electricityProductionOn) {
+    if (state.electricityProductionOn && state.electricityProductionEnabled) {
         state.electricityProductionSegment = EffectUtils::runSegmentDir(
             state,
             state.electricityProductionSegmentStart,
@@ -71,7 +89,7 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
         );
 
         if (state.electricityProductionSegment == EffectUtils::terminalBound(state.electricityProductionDirForward, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd)) {
-            if (!state.electrolyserOn) {
+            if (!state.electrolyserOn && state.electrolyserEnabled) {
                 state.electrolyserOn = true;
                 timers.previousMillisElectrolyser = millis();
             }
@@ -86,9 +104,11 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
 
 // ---- Electrolyser
 void updateElectrolyserEffect(SystemState &state, Timers &timers) {
-    if (state.electrolyserOn) {
+    if (state.electrolyserOn && state.electrolyserEnabled) {
         if (millis() - timers.previousMillisElectrolyser >= HYDROGEN_PRODUCTION_DELAY_MS) {
-            state.hydrogenProductionOn = true;
+            if (state.hydrogenProductionEnabled) {
+                state.hydrogenProductionOn = true;
+            }
         }
     } else {
         state.hydrogenProductionOn = false;
@@ -97,11 +117,13 @@ void updateElectrolyserEffect(SystemState &state, Timers &timers) {
 
 // ---- Hydrogen production/transport/storage/consumption (moved here)
 void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenProductionOn) {
+    if (state.hydrogenProductionOn && state.hydrogenProductionEnabled) {
         if (state.fadeEffect) {
             state.fadeEffect->update(state.leds, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, HYDROGEN_PRODUCTION_COLOR_ACTIVE, state.firstRunHydrogenProduction);
         }
-        state.hydrogenTransportOn = true;
+        if (state.hydrogenTransportEnabled) {
+            state.hydrogenTransportOn = true;
+        }
     } else {
         EffectUtils::clearRange(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
         state.firstRunHydrogenProduction = true;
@@ -110,7 +132,7 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
 }
 
 void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenTransportOn) {
+    if (state.hydrogenTransportOn && state.hydrogenTransportEnabled) {
         state.hydrogenTransportSegment = EffectUtils::runSegmentDir(
             state,
             state.hydrogenTransportSegmentStart,
@@ -125,13 +147,17 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
         );
 
         if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_MID) {
-            state.h2ConsumptionOn = true;
+            if (state.h2ConsumptionEnabled) {
+                state.h2ConsumptionOn = true;
+            }
         }
         if (state.hydrogenTransportSegment == EffectUtils::terminalBound(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd)) {
-            state.hydrogenStorageOn = true;
+            if (state.hydrogenStorageEnabled) {
+                state.hydrogenStorageOn = true;
+            }
             state.emptyPipe = true;
         }
-    } else if (state.hydrogenStorageFull) {
+    } else if (state.hydrogenStorageFull && state.hydrogenTransportEnabled) {
         if (state.hydrogenTransportSegment == EffectUtils::initialIndex(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd)) {
             state.pipeEmpty = true;
         }
@@ -162,7 +188,8 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
 
         state.hydrogenStorageOn = false;
     } else {
-        // reset
+        // reset or disabled
+        EffectUtils::clearRange(state, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
         state.firstRunHydrogenTransport = true;
         state.hydrogenTransportSegment = EffectUtils::initialIndex(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
         state.hydrogenStorageOn = false;
@@ -172,7 +199,7 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
 }
 
 void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenStorageOn) {
+    if (state.hydrogenStorageOn && state.hydrogenStorageEnabled) {
         state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
             state,
             state.hydrogenStorage1SegmentStart,
@@ -240,7 +267,9 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
         }
         if (state.hydrogenStorageSegment1 == EffectUtils::initialIndex(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd) ||
             state.hydrogenStorageSegment2 == EffectUtils::initialIndex(state.hydrogenStorage2DirForward, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd)) {
-            state.storageTransportOn = true;
+            if (state.storageTransportEnabled) {
+                state.storageTransportOn = true;
+            }
         }
     } else {
         EffectUtils::clearRange(state, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
@@ -255,7 +284,7 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
 }
 
 void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
-    if (state.h2ConsumptionOn) {
+    if (state.h2ConsumptionOn && state.h2ConsumptionEnabled) {
         state.h2ConsumptionSegment = EffectUtils::runSegmentDir(
             state,
             state.hydrogenConsumptionSegmentStart,
@@ -270,11 +299,15 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
         );
 
         if (state.h2ConsumptionSegment == EffectUtils::terminalBound(state.h2ConsumptionDirForward, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd)) {
-            state.fabricationOn = true;
+            if (state.fabricationEnabled) {
+                state.fabricationOn = true;
+            }
         }
-    } else if (state.storageTransportOn) {
+    } else if (state.storageTransportOn && state.storageTransportEnabled) {
         if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
-            state.fabricationOn = true;
+            if (state.fabricationEnabled) {
+                state.fabricationOn = true;
+            }
         }
     } else {
         EffectUtils::clearRange(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
@@ -286,16 +319,16 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
 
 // ---- Fabrication effect
 void updateFabricationEffect(SystemState &state, Timers &timers) {
-    if (state.fabricationOn) {
+    if (state.fabricationOn && state.fabricationEnabled) {
         fireEffect(state.leds, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     } else {
-    EffectUtils::clearRange(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
+        EffectUtils::clearRange(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     }
 }
 
 // ---- Storage transport / powerstation
 void updateStorageTransportEffect(SystemState &state, Timers &timers) {
-    if (state.storageTransportOn) {
+    if (state.storageTransportOn && state.storageTransportEnabled) {
         state.storageTransportSegment = EffectUtils::runSegmentDir(
             state,
             state.storageTransportSegmentStart,
@@ -309,9 +342,11 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
             state.storageTransportDirForward
         );
         if (state.storageTransportSegment == EffectUtils::terminalBound(state.storageTransportDirForward, state.storageTransportSegmentStart, state.storageTransportSegmentEnd)) {
-            state.storagePowerstationOn = true;
+            if (state.storagePowerstationEnabled) {
+                state.storagePowerstationOn = true;
+            }
         }
-        if (state.storagePowerstationOn) {
+        if (state.storagePowerstationOn && state.storagePowerstationEnabled) {
             state.storagePowerstationSegment = EffectUtils::runSegmentDir(
                 state,
                 state.storagePowerstationSegmentStart,
@@ -326,8 +361,10 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
             );
         }
         if (state.storagePowerstationSegment == EffectUtils::terminalBound(state.storagePowerstationDirForward, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd)) {
-            state.electricityTransportOn = true;
-            Serial.println("Electricity transport enabled");
+            if (state.electricityTransportEnabled) {
+                state.electricityTransportOn = true;
+                Serial.println("Electricity transport enabled");
+            }
         }
     } else {
         EffectUtils::clearRange(state, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
@@ -342,7 +379,7 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
 
 // ---- Electricity transport
 void updateElectricityEffect(SystemState &state, Timers &timers) {
-    if (state.electricityTransportOn) {
+    if (state.electricityTransportOn && state.electricityTransportEnabled) {
         state.electricityTransportSegment = EffectUtils::runSegmentDir(
             state,
             state.electricityTransportSegmentStart,
