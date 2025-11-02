@@ -11,6 +11,9 @@
 // Use the global state defined in main.cpp
 extern SystemState state;
 
+// Forward declaration from main.cpp to reset program state
+void resetAllVariables();
+
 static AsyncWebServer server(80);
 static Preferences prefs;
 
@@ -295,6 +298,8 @@ void initWebServerSafe() {
         // Clear LEDs on exit from test for a clean state
         fill_solid(state.leds, NUM_LEDS, CRGB::Black);
         FastLED.show();
+        // Reset the program state to initial defaults
+        resetAllVariables();
         request->redirect("/");
     });
 
