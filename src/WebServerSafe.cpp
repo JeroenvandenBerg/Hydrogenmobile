@@ -47,6 +47,9 @@ void initWebServerSafe() {
     auto loadDir = [](const char* key, bool defVal) {
         return prefs.getBool(key, defVal);
     };
+    auto loadEn = [](const char* key, bool defVal) {
+        return prefs.getBool(key, defVal);
+    };
 
     loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
     loadSegment("solar_start", "solar_end", SOLAR_LED_START, SOLAR_LED_END, state.solarSegmentStart, state.solarSegmentEnd);
@@ -72,6 +75,20 @@ void initWebServerSafe() {
     state.electricityTransportDirForward = loadDir("elec_tran_dir", true);
     state.storageTransportDirForward = loadDir("stor_tran_dir", true);
     state.storagePowerstationDirForward = loadDir("stor_pow_dir", true);
+
+    // Load enabled flags
+    state.windEnabled = loadEn("wind_en", true);
+    state.solarEnabled = loadEn("solar_en", true);
+    state.electricityProductionEnabled = loadEn("elec_prod_en", true);
+    state.electrolyserEnabled = loadEn("electrolyser_en", true);
+    state.hydrogenProductionEnabled = loadEn("h2_prod_en", true);
+    state.hydrogenTransportEnabled = loadEn("h2_trans_en", true);
+    state.hydrogenStorageEnabled = loadEn("h2_stor_en", true);
+    state.h2ConsumptionEnabled = loadEn("h2_cons_en", true);
+    state.fabricationEnabled = loadEn("fabr_en", true);
+    state.electricityTransportEnabled = loadEn("elec_tran_en", true);
+    state.storageTransportEnabled = loadEn("stor_tran_en", true);
+    state.storagePowerstationEnabled = loadEn("stor_pow_en", true);
 
     // Serve root page with all segments
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -101,7 +118,7 @@ void initWebServerSafe() {
     page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
         
         // Helper lambda to create segment row with test button
-    auto addSegmentDir = [&](const char* name, const char* startName, const char* endName, const char* dirName, int startVal, int endVal, bool dirVal) {
+    auto addSegmentDir = [&](const char* name, const char* startName, const char* endName, const char* dirName, const char* enName, int startVal, int endVal, bool dirVal, bool enVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
             "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
             " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
@@ -109,29 +126,36 @@ void initWebServerSafe() {
             "<option value='1'" + String(dirVal ? " selected" : "") + ">Forward</option>"
             "<option value='0'" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
             "</select>"
+            " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1'" + String(enVal ? " checked" : "") + ">"
             "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "')\">Test</button>"
             "</div>";
         };
-    auto addSegmentSimple = [&](const char* name, const char* startName, const char* endName, int startVal, int endVal) {
+    auto addSegmentSimple = [&](const char* name, const char* startName, const char* endName, const char* enName, int startVal, int endVal, bool enVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
             "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
             " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
+            " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1'" + String(enVal ? " checked" : "") + ">"
             "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','')\">Test</button>"
             "</div>";
         };
         
-    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", state.windSegmentStart, state.windSegmentEnd, state.windDirForward);
-    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward);
-    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward);
-    addSegmentSimple("Hydrogen Production", "h2_prod_s", "h2_prod_e", state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
-    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward);
-    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward);
-    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward);
-    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward);
-    addSegmentSimple("Fabrication", "fabr_start", "fabr_end", state.fabricationSegmentStart, state.fabricationSegmentEnd);
-    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward);
-    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward);
-    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward);
+    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", "wind_en", state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled);
+    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", "solar_en", state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled);
+    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled);
+    addSegmentSimple("Hydrogen Production", "h2_prod_s", "h2_prod_e", "h2_prod_en", state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionEnabled);
+    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled);
+    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled);
+    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled);
+    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled);
+    addSegmentSimple("Fabrication", "fabr_start", "fabr_end", "fabr_en", state.fabricationSegmentStart, state.fabricationSegmentEnd, state.fabricationEnabled);
+    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled);
+    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward, state.storageTransportEnabled);
+    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled);
+
+        // Non-segment control: Electrolyser enable
+        page += String("<div class='segment'><b>Electrolyser</b><br> Enabled: ") +
+                "<input type='checkbox' name='electrolyser_en' value='1'" + String(state.electrolyserEnabled ? " checked" : "") + ">" +
+                "</div>";
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
             "<script>\n"
@@ -170,6 +194,12 @@ void initWebServerSafe() {
             outDir = (v == "1");
             return true;
         };
+        auto getCheckbox = [&](const char* name) -> bool {
+            // Checkboxes are sent only when checked; treat missing as false
+            if (!request->hasParam(name, true)) return false;
+            String v = request->getParam(name, true)->value();
+            return (v == "1" || v == "on" || v == "true");
+        };
 
     int ws, we, ss, se, eps, epe, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
     bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir;
@@ -200,6 +230,20 @@ void initWebServerSafe() {
             return;
         }
 
+        // Checkboxes (missing means false)
+        bool wen  = getCheckbox("wind_en");
+        bool sen  = getCheckbox("solar_en");
+        bool epen = getCheckbox("elec_prod_en");
+        bool hpen = getCheckbox("h2_prod_en");
+        bool hten = getCheckbox("h2_trans_en");
+        bool hsen = getCheckbox("h2_stor_en");
+        bool hcen = getCheckbox("h2_cons_en");
+        bool fben = getCheckbox("fabr_en");
+        bool eten = getCheckbox("elec_tran_en");
+        bool sten = getCheckbox("stor_tran_en");
+        bool spen = getCheckbox("stor_pow_en");
+        bool elyen = getCheckbox("electrolyser_en");
+
         // Save all to preferences
         prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we);
         prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se);
@@ -208,11 +252,11 @@ void initWebServerSafe() {
         prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte);
         prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e);
         prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e);
-        prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce);
-        prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
-        prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete);
-        prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste);
-        prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe);
+    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce);
+    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
+    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete);
+    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste);
+    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe);
 
     // Update runtime state
         state.windSegmentStart = ws; state.windSegmentEnd = we;
@@ -228,19 +272,20 @@ void initWebServerSafe() {
         state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
 
-    // Save all to preferences (directions too)
-    prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir);
-    prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir);
-    prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir);
-    prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe);
-    prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir);
+    // Save all to preferences (directions and enables too)
+    prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen);
+    prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen);
+    prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen);
+    prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe); prefs.putBool("h2_prod_en", hpen);
+    prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten);
     prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir);
-    prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir);
-    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir);
-    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
-    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir);
-    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir);
-    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir);
+    prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen);
+    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen);
+    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben);
+    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten);
+    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten);
+    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen);
+    prefs.putBool("electrolyser_en", elyen);
 
     // Update directions in runtime state
     state.windDirForward = wdir;
@@ -253,6 +298,20 @@ void initWebServerSafe() {
     state.electricityTransportDirForward = etdir;
     state.storageTransportDirForward = stdir;
     state.storagePowerstationDirForward = spdir;
+
+    // Update enabled flags in runtime state
+    state.windEnabled = wen;
+    state.solarEnabled = sen;
+    state.electricityProductionEnabled = epen;
+    state.electrolyserEnabled = elyen;
+    state.hydrogenProductionEnabled = hpen;
+    state.hydrogenTransportEnabled = hten;
+    state.hydrogenStorageEnabled = hsen;
+    state.h2ConsumptionEnabled = hcen;
+    state.fabricationEnabled = fben;
+    state.electricityTransportEnabled = eten;
+    state.storageTransportEnabled = sten;
+    state.storagePowerstationEnabled = spen;
 
         request->redirect("/");
     });

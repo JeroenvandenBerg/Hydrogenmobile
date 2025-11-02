@@ -62,6 +62,20 @@ struct SystemState {
     int testSegmentIndex = 0;
     bool testDirForward = true;
 
+    // Enable flags per segment/effect
+    bool windEnabled = true;
+    bool solarEnabled = true;
+    bool electricityProductionEnabled = true;
+    bool electrolyserEnabled = true;
+    bool hydrogenProductionEnabled = true;
+    bool hydrogenTransportEnabled = true;
+    bool hydrogenStorageEnabled = true; // applies to both storage segments
+    bool h2ConsumptionEnabled = true;
+    bool fabricationEnabled = true;
+    bool electricityTransportEnabled = true;
+    bool storageTransportEnabled = true;
+    bool storagePowerstationEnabled = true;
+
     // Segment indices
     int windSegment = 0;
     // Allow runtime overrides (persisted by web UI) for all segment start/end
