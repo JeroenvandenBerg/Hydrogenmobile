@@ -6,6 +6,7 @@
 #include "LEDs.h"
 #include "effects/Effects.h"
 #include "SystemState.h"
+#include "WebServerSafe.h"
 
 // ========================== Global state ==========================
 // LED buffer moved into SystemState (state.leds)
@@ -33,6 +34,10 @@ void setup() {
     state.fadeEffect = new fadeLeds(2000);
     digitalWrite(BUTTON_LED_PIN, HIGH);
     resetAllVariables();
+    // start the safe web UI which will load any persisted wind segment overrides
+    initWebServerSafe();
+    // ensure runtime index uses the possibly overridden start
+    state.windSegment = state.windSegmentStart;
     state.windOn = true;
 }
 
@@ -147,7 +152,7 @@ void resetAllVariables() {
     timers.hydrogenStorageFullTimer = now;
 
     // reset indices
-    state.windSegment = WIND_LED_START;
+    state.windSegment = state.windSegmentStart;
     state.solarSegment = SOLAR_LED_END;
     state.electricityProductionSegment = ELECTRICITY_PRODUCTION_LED_START;
     state.hydrogenTransportSegment = HYDROGEN_TRANSPORT_LED_START;

@@ -14,8 +14,8 @@ void updateWindEffect(SystemState &state, Timers &timers) {
     if (state.windOn) {
         state.windSegment = runningLeds(
             state.leds,
-            WIND_LED_START,
-            WIND_LED_END,
+            state.windSegmentStart,
+            state.windSegmentEnd,
             WIND_COLOR_ACTIVE,
             CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -35,13 +35,13 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.firstRunSolar
         );
 
-        if (state.windSegment == WIND_LED_END || state.solarSegment == SOLAR_LED_START) {
+        if (state.windSegment == state.windSegmentEnd || state.solarSegment == SOLAR_LED_START) {
             state.electricityProductionOn = true;
         }
     } else {
-    clearSegment(state, WIND_LED_START, WIND_LED_END);
+    clearSegment(state, state.windSegmentStart, state.windSegmentEnd);
         state.firstRunWind = true;
-        state.windSegment = WIND_LED_START;
+        state.windSegment = state.windSegmentStart;
 
     clearSegment(state, SOLAR_LED_START, SOLAR_LED_END);
         state.firstRunSolar = true;
