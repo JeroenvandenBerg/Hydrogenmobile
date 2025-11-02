@@ -105,14 +105,14 @@ void initWebServerSafe() {
             "<option value='1'" + String(dirVal ? " selected" : "") + ">Forward</option>"
             "<option value='0'" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
             "</select>"
-            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "')\">Test</button>"
+            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "')\">Test</button>"
             "</div>";
         };
     auto addSegmentSimple = [&](const char* name, const char* startName, const char* endName, int startVal, int endVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
             "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
             " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
-            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "')\">Test</button>"
+            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','')\">Test</button>"
             "</div>";
         };
         
@@ -131,10 +131,12 @@ void initWebServerSafe() {
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
             "<script>\n"
-            "function testSegment(startName,endName){\n"
+            "function testSegment(startName,endName,dirName){\n"
             "  const s=document.getElementById(startName).value;\n"
             "  const e=document.getElementById(endName).value;\n"
-            "  const body=new URLSearchParams({start:s,end:e}).toString();\n"
+            "  let d='1';\n"
+            "  if(dirName){ const sel=document.querySelector(\"select[name='\"+dirName+\"']\"); if(sel){ d=sel.value; } }\n"
+            "  const body=new URLSearchParams({start:s,end:e,dir:d}).toString();\n"
             "  fetch('/test',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Test request failed'));\n"
@@ -260,6 +262,11 @@ void initWebServerSafe() {
 
         int start = request->getParam("start", true)->value().toInt();
         int end = request->getParam("end", true)->value().toInt();
+        bool dir = true;
+        if (request->hasParam("dir", true)) {
+            String v = request->getParam("dir", true)->value();
+            dir = (v == "1");
+        }
 
         if (start < 0 || start >= NUM_LEDS || end < 0 || end >= NUM_LEDS || start > end) {
             request->send(400, "text/plain", "Invalid range");
@@ -271,6 +278,7 @@ void initWebServerSafe() {
         state.testSegmentStart = start;
         state.testSegmentEnd = end;
         state.testSegmentIndex = start;
+        state.testDirForward = dir;
 
         request->redirect("/");
     });

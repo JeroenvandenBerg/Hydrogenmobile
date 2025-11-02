@@ -60,6 +60,7 @@ struct SystemState {
     int testSegmentStart = 0;
     int testSegmentEnd = 0;
     int testSegmentIndex = 0;
+    bool testDirForward = true;
 
     // Segment indices
     int windSegment = 0;

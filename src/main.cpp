@@ -198,7 +198,7 @@ void runTestMode() {
     // Clear all LEDs on first entry to test mode
     if (firstRun) {
         fill_solid(state.leds, NUM_LEDS, CRGB::Black);
-        state.testSegmentIndex = state.testSegmentStart;
+        state.testSegmentIndex = state.testDirForward ? state.testSegmentStart : state.testSegmentEnd;
         firstRun = false;
         previousMillis = millis();
     }
@@ -215,10 +215,17 @@ void runTestMode() {
         // Light up current position
         state.leds[state.testSegmentIndex] = CRGB::White;
         
-        // Move to next LED
-        state.testSegmentIndex++;
-        if (state.testSegmentIndex > state.testSegmentEnd) {
-            state.testSegmentIndex = state.testSegmentStart;
+        // Move to next LED based on direction
+        if (state.testDirForward) {
+            state.testSegmentIndex++;
+            if (state.testSegmentIndex > state.testSegmentEnd) {
+                state.testSegmentIndex = state.testSegmentStart;
+            }
+        } else {
+            state.testSegmentIndex--;
+            if (state.testSegmentIndex < state.testSegmentStart) {
+                state.testSegmentIndex = state.testSegmentEnd;
+            }
         }
     }
     
