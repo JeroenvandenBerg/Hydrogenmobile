@@ -5,6 +5,7 @@
 #include "Hardware.h"
 #include "LEDs.h"
 #include "effects/Effects.h"
+#include "effects/EffectUtils.h"
 #include "SystemState.h"
 #include "WebServerSafe.h"
 
@@ -37,8 +38,8 @@ void setup() {
     resetAllVariables();
     // start the safe web UI which will load any persisted wind segment overrides
     initWebServerSafe();
-    // ensure runtime index uses the possibly overridden start
-    state.windSegment = state.windSegmentStart;
+    // ensure runtime index uses the possibly overridden start and configured direction
+    state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
     state.windOn = true;
 }
 
@@ -156,18 +157,18 @@ void resetAllVariables() {
     timers.previousMillisStoragePowerstation = now;
     timers.hydrogenStorageFullTimer = now;
 
-    // reset indices
-    state.windSegment = state.windSegmentStart;
-    state.solarSegment = SOLAR_LED_END;
-    state.electricityProductionSegment = ELECTRICITY_PRODUCTION_LED_START;
-    state.hydrogenTransportSegment = HYDROGEN_TRANSPORT_LED_START;
-    state.hydrogenProductionSegment = HYDROGEN_PRODUCTION_LED_START;
-    state.hydrogenStorageSegment1 = HYDROGEN_STORAGE1_LED_START;
-    state.hydrogenStorageSegment2 = HYDROGEN_STORAGE2_LED_START;
-    state.h2ConsumptionSegment = HYDROGEN_CONSUMPTION_LED_START;
-    state.electricityTransportSegment = ELECTRICITY_TRANSPORT_LED_START;
-    state.storageTransportSegment = STORAGE_TRANSPORT_LED_START;
-    state.storagePowerstationSegment = STORAGE_POWERSTATION_LED_START;
+    // reset indices to initial positions based on configured directions and ranges
+    state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
+    state.solarSegment = EffectUtils::initialIndex(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd);
+    state.electricityProductionSegment = EffectUtils::initialIndex(state.electricityProductionDirForward, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
+    state.hydrogenTransportSegment = EffectUtils::initialIndex(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+    state.hydrogenProductionSegment = state.hydrogenProductionSegmentStart; // fade effect uses range only
+    state.hydrogenStorageSegment1 = EffectUtils::initialIndex(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+    state.hydrogenStorageSegment2 = EffectUtils::initialIndex(state.hydrogenStorage2DirForward, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+    state.h2ConsumptionSegment = EffectUtils::initialIndex(state.h2ConsumptionDirForward, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
+    state.electricityTransportSegment = EffectUtils::initialIndex(state.electricityTransportDirForward, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
+    state.storageTransportSegment = EffectUtils::initialIndex(state.storageTransportDirForward, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
+    state.storagePowerstationSegment = EffectUtils::initialIndex(state.storagePowerstationDirForward, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
 
     // reset first-run flags
     state.firstRunWind = true;
