@@ -13,6 +13,14 @@ extern SystemState state;
 static AsyncWebServer server(80);
 static Preferences prefs;
 
+// Task to restart the ESP after sending the response
+static void restartTask(void *pvParameters) {
+    // small delay to allow the HTTP response to be sent
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    ESP.restart();
+    vTaskDelete(NULL);
+}
+
 void initWebServerSafe() {
     // Start AP with a simple SSID. This is intentionally minimal and unsecured for local use only.
     WiFi.softAP("HydrogenDemo", "12345678");
@@ -42,6 +50,10 @@ void initWebServerSafe() {
                  "Start: <input type=\"number\" name=\"start\" min=0 max=%d value=%d><br>"
                  "End: <input type=\"number\" name=\"end\" min=0 max=%d value=%d><br>"
                  "<button type=\"submit\">Save</button></form>"
+                 "<hr>"
+                 "<form method=\"POST\" action=\"/restart\" onsubmit=\"return confirm('Restart the device?')\">"
+                 "<button type=\"submit\" style=\"background:#d9534f;color:white;padding:8px 12px;border:none;border-radius:4px;\">Restart ESP</button>"
+                 "</form>"
                  "</body></html>", NUM_LEDS-1, state.windSegmentStart, NUM_LEDS-1, state.windSegmentEnd);
         request->send(200, "text/html", page);
     });
@@ -69,6 +81,13 @@ void initWebServerSafe() {
         state.windSegmentEnd = end;
 
         request->send(200, "text/plain", "Saved");
+    });
+
+    // Restart handler - posts here will restart the device after responding
+    server.on("/restart", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "text/plain", "Restarting");
+        // create a small task to restart so we don't block the webserver thread
+        xTaskCreate(restartTask, "restart", 2048, NULL, 1, NULL);
     });
 
     server.begin();
