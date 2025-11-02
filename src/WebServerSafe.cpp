@@ -30,62 +30,155 @@ void initWebServerSafe() {
     // Open preferences namespace
     prefs.begin("led-config", false);
 
-    // Load persisted wind segment start/end if present
-    int persistedStart = prefs.getInt("wind_start", WIND_LED_START);
-    int persistedEnd = prefs.getInt("wind_end", WIND_LED_END);
-    // Sanitize
-    if (persistedStart < 0) persistedStart = 0;
-    if (persistedEnd >= NUM_LEDS) persistedEnd = NUM_LEDS - 1;
-    if (persistedStart > persistedEnd) persistedEnd = persistedStart;
-    state.windSegmentStart = persistedStart;
-    state.windSegmentEnd = persistedEnd;
+    // Load all persisted segments with defaults from Config.h
+    auto loadSegment = [](const char* startKey, const char* endKey, int defStart, int defEnd, int &outStart, int &outEnd) {
+        int s = prefs.getInt(startKey, defStart);
+        int e = prefs.getInt(endKey, defEnd);
+        if (s < 0) s = 0;
+        if (e >= NUM_LEDS) e = NUM_LEDS - 1;
+        if (s > e) e = s;
+        outStart = s;
+        outEnd = e;
+    };
 
-    // Serve root page
+    loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
+    loadSegment("solar_start", "solar_end", SOLAR_LED_START, SOLAR_LED_END, state.solarSegmentStart, state.solarSegmentEnd);
+    loadSegment("elec_prod_s", "elec_prod_e", ELECTRICITY_PRODUCTION_LED_START, ELECTRICITY_PRODUCTION_LED_END, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
+    loadSegment("h2_prod_s", "h2_prod_e", HYDROGEN_PRODUCTION_LED_START, HYDROGEN_PRODUCTION_LED_END, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+    loadSegment("h2_trans_s", "h2_trans_e", HYDROGEN_TRANSPORT_LED_START, HYDROGEN_TRANSPORT_LED_END, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+    loadSegment("h2_stor1_s", "h2_stor1_e", HYDROGEN_STORAGE1_LED_START, HYDROGEN_STORAGE1_LED_END, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+    loadSegment("h2_stor2_s", "h2_stor2_e", HYDROGEN_STORAGE2_LED_START, HYDROGEN_STORAGE2_LED_END, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+    loadSegment("h2_cons_s", "h2_cons_e", HYDROGEN_CONSUMPTION_LED_START, HYDROGEN_CONSUMPTION_LED_END, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
+    loadSegment("fabr_start", "fabr_end", FABRICATION_LED_START, FABRICATION_LED_END, state.fabricationSegmentStart, state.fabricationSegmentEnd);
+    loadSegment("elec_tran_s", "elec_tran_e", ELECTRICITY_TRANSPORT_LED_START, ELECTRICITY_TRANSPORT_LED_END, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
+    loadSegment("stor_tran_s", "stor_tran_e", STORAGE_TRANSPORT_LED_START, STORAGE_TRANSPORT_LED_END, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
+    loadSegment("stor_pow_s", "stor_pow_e", STORAGE_POWERSTATION_LED_START, STORAGE_POWERSTATION_LED_END, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
+
+    // Serve root page with all segments
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        char page[1024];
-        snprintf(page, sizeof(page),
-                 "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Wind Segment</title></head><body>"
-                 "<h3>Wind LED Segment</h3>"
-                 "<form method=\"POST\" action=\"/wind\">"
-                 "Start: <input type=\"number\" name=\"start\" min=0 max=%d value=%d><br>"
-                 "End: <input type=\"number\" name=\"end\" min=0 max=%d value=%d><br>"
-                 "<button type=\"submit\">Save</button></form>"
-                 "<hr>"
-                 "<form method=\"POST\" action=\"/restart\" onsubmit=\"return confirm('Restart the device?')\">"
-                 "<button type=\"submit\" style=\"background:#d9534f;color:white;padding:8px 12px;border:none;border-radius:4px;\">Restart ESP</button>"
-                 "</form>"
-                 "</body></html>", NUM_LEDS-1, state.windSegmentStart, NUM_LEDS-1, state.windSegmentEnd);
+        String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Segments</title>"
+            "<style>body{font-family:Arial,sans-serif;max-width:600px;margin:20px auto;padding:10px;}"
+            "h3{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:5px;}"
+            ".segment{background:#f9f9f9;padding:10px;margin:10px 0;border-radius:5px;}"
+            "input{width:60px;padding:5px;margin:5px;}"
+            "button{background:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px;}"
+            "button:hover{background:#45a049;}"
+            ".restart{background:#d9534f;}"
+            ".restart:hover{background:#c9302c;}"
+            "</style></head><body>"
+            "<h3>LED Segment Configuration</h3>"
+            "<form method=\"POST\" action=\"/update\">";
+        
+        // Define each segment for the form
+        page += "<div class='segment'><b>Wind</b><br>Start: <input type='number' name='wind_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.windSegmentStart) + ">";
+        page += " End: <input type='number' name='wind_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.windSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Solar</b><br>Start: <input type='number' name='solar_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.solarSegmentStart) + ">";
+        page += " End: <input type='number' name='solar_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.solarSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Electricity Production</b><br>Start: <input type='number' name='elec_prod_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityProductionSegmentStart) + ">";
+        page += " End: <input type='number' name='elec_prod_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityProductionSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Hydrogen Production</b><br>Start: <input type='number' name='h2_prod_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenProductionSegmentStart) + ">";
+        page += " End: <input type='number' name='h2_prod_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenProductionSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Hydrogen Transport</b><br>Start: <input type='number' name='h2_trans_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenTransportSegmentStart) + ">";
+        page += " End: <input type='number' name='h2_trans_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenTransportSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Hydrogen Storage 1</b><br>Start: <input type='number' name='h2_stor1_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage1SegmentStart) + ">";
+        page += " End: <input type='number' name='h2_stor1_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage1SegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Hydrogen Storage 2</b><br>Start: <input type='number' name='h2_stor2_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage2SegmentStart) + ">";
+        page += " End: <input type='number' name='h2_stor2_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage2SegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Hydrogen Consumption</b><br>Start: <input type='number' name='h2_cons_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenConsumptionSegmentStart) + ">";
+        page += " End: <input type='number' name='h2_cons_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenConsumptionSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Fabrication</b><br>Start: <input type='number' name='fabr_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.fabricationSegmentStart) + ">";
+        page += " End: <input type='number' name='fabr_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.fabricationSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Electricity Transport</b><br>Start: <input type='number' name='elec_tran_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityTransportSegmentStart) + ">";
+        page += " End: <input type='number' name='elec_tran_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityTransportSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Storage Transport</b><br>Start: <input type='number' name='stor_tran_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storageTransportSegmentStart) + ">";
+        page += " End: <input type='number' name='stor_tran_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storageTransportSegmentEnd) + "></div>";
+        
+        page += "<div class='segment'><b>Storage Powerstation</b><br>Start: <input type='number' name='stor_pow_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storagePowerstationSegmentStart) + ">";
+        page += " End: <input type='number' name='stor_pow_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storagePowerstationSegmentEnd) + "></div>";
+        
+        page += "<button type='submit'>Save All Settings</button></form><hr>"
+            "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
+            "<button type='submit' class='restart'>Restart ESP</button></form></body></html>";
+        
         request->send(200, "text/html", page);
     });
 
-    // Handle update
-    server.on("/wind", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (!request->hasParam("start", true) || !request->hasParam("end", true)) {
-            request->send(400, "text/plain", "Missing parameters");
+    // Handle update for all segments
+    server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
+        // Helper to get and validate segment parameters
+        auto getSegment = [&](const char* startName, const char* endName, int &outStart, int &outEnd) -> bool {
+            if (!request->hasParam(startName, true) || !request->hasParam(endName, true)) return false;
+            int s = request->getParam(startName, true)->value().toInt();
+            int e = request->getParam(endName, true)->value().toInt();
+            if (s < 0 || s >= NUM_LEDS || e < 0 || e >= NUM_LEDS || s > e) return false;
+            outStart = s;
+            outEnd = e;
+            return true;
+        };
+
+        int ws, we, ss, se, eps, epe, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
+        
+        if (!getSegment("wind_start", "wind_end", ws, we) ||
+            !getSegment("solar_start", "solar_end", ss, se) ||
+            !getSegment("elec_prod_s", "elec_prod_e", eps, epe) ||
+            !getSegment("h2_prod_s", "h2_prod_e", hps, hpe) ||
+            !getSegment("h2_trans_s", "h2_trans_e", hts, hte) ||
+            !getSegment("h2_stor1_s", "h2_stor1_e", h1s, h1e) ||
+            !getSegment("h2_stor2_s", "h2_stor2_e", h2s, h2e) ||
+            !getSegment("h2_cons_s", "h2_cons_e", hcs, hce) ||
+            !getSegment("fabr_start", "fabr_end", fs, fe) ||
+            !getSegment("elec_tran_s", "elec_tran_e", ets, ete) ||
+            !getSegment("stor_tran_s", "stor_tran_e", sts, ste) ||
+            !getSegment("stor_pow_s", "stor_pow_e", sps, spe)) {
+            request->send(400, "text/plain", "Missing or invalid parameters");
             return;
         }
 
-        int start = request->getParam("start", true)->value().toInt();
-        int end = request->getParam("end", true)->value().toInt();
+        // Save all to preferences
+        prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we);
+        prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se);
+        prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe);
+        prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe);
+        prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte);
+        prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e);
+        prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e);
+        prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce);
+        prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
+        prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete);
+        prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste);
+        prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe);
 
-        if (start < 0 || start >= NUM_LEDS || end < 0 || end >= NUM_LEDS || start > end) {
-            request->send(400, "text/plain", "Invalid range");
-            return;
-        }
+        // Update runtime state
+        state.windSegmentStart = ws; state.windSegmentEnd = we;
+        state.solarSegmentStart = ss; state.solarSegmentEnd = se;
+        state.electricityProductionSegmentStart = eps; state.electricityProductionSegmentEnd = epe;
+        state.hydrogenProductionSegmentStart = hps; state.hydrogenProductionSegmentEnd = hpe;
+        state.hydrogenTransportSegmentStart = hts; state.hydrogenTransportSegmentEnd = hte;
+        state.hydrogenStorage1SegmentStart = h1s; state.hydrogenStorage1SegmentEnd = h1e;
+        state.hydrogenStorage2SegmentStart = h2s; state.hydrogenStorage2SegmentEnd = h2e;
+        state.hydrogenConsumptionSegmentStart = hcs; state.hydrogenConsumptionSegmentEnd = hce;
+        state.fabricationSegmentStart = fs; state.fabricationSegmentEnd = fe;
+        state.electricityTransportSegmentStart = ets; state.electricityTransportSegmentEnd = ete;
+        state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
+        state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
 
-        prefs.putInt("wind_start", start);
-        prefs.putInt("wind_end", end);
-
-        // Update runtime state as well
-        state.windSegmentStart = start;
-        state.windSegmentEnd = end;
-
-        request->send(200, "text/plain", "Saved");
+        request->redirect("/");
     });
 
     // Restart handler - posts here will restart the device after responding
     server.on("/restart", HTTP_POST, [](AsyncWebServerRequest *request){
-        request->send(200, "text/plain", "Restarting");
+        // Redirect to main page, then restart
+        request->redirect("/");
         // create a small task to restart so we don't block the webserver thread
         xTaskCreate(restartTask, "restart", 2048, NULL, 1, NULL);
     });

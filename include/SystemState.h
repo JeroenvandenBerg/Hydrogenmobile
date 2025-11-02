@@ -57,9 +57,31 @@ struct SystemState {
 
     // Segment indices
     int windSegment = 0;
-    // Allow runtime overrides (persisted by web UI) for wind segment start/end
+    // Allow runtime overrides (persisted by web UI) for all segment start/end
     int windSegmentStart = WIND_LED_START;
     int windSegmentEnd = WIND_LED_END;
+    int solarSegmentStart = SOLAR_LED_START;
+    int solarSegmentEnd = SOLAR_LED_END;
+    int electricityProductionSegmentStart = ELECTRICITY_PRODUCTION_LED_START;
+    int electricityProductionSegmentEnd = ELECTRICITY_PRODUCTION_LED_END;
+    int hydrogenProductionSegmentStart = HYDROGEN_PRODUCTION_LED_START;
+    int hydrogenProductionSegmentEnd = HYDROGEN_PRODUCTION_LED_END;
+    int hydrogenTransportSegmentStart = HYDROGEN_TRANSPORT_LED_START;
+    int hydrogenTransportSegmentEnd = HYDROGEN_TRANSPORT_LED_END;
+    int hydrogenStorage1SegmentStart = HYDROGEN_STORAGE1_LED_START;
+    int hydrogenStorage1SegmentEnd = HYDROGEN_STORAGE1_LED_END;
+    int hydrogenStorage2SegmentStart = HYDROGEN_STORAGE2_LED_START;
+    int hydrogenStorage2SegmentEnd = HYDROGEN_STORAGE2_LED_END;
+    int hydrogenConsumptionSegmentStart = HYDROGEN_CONSUMPTION_LED_START;
+    int hydrogenConsumptionSegmentEnd = HYDROGEN_CONSUMPTION_LED_END;
+    int fabricationSegmentStart = FABRICATION_LED_START;
+    int fabricationSegmentEnd = FABRICATION_LED_END;
+    int electricityTransportSegmentStart = ELECTRICITY_TRANSPORT_LED_START;
+    int electricityTransportSegmentEnd = ELECTRICITY_TRANSPORT_LED_END;
+    int storageTransportSegmentStart = STORAGE_TRANSPORT_LED_START;
+    int storageTransportSegmentEnd = STORAGE_TRANSPORT_LED_END;
+    int storagePowerstationSegmentStart = STORAGE_POWERSTATION_LED_START;
+    int storagePowerstationSegmentEnd = STORAGE_POWERSTATION_LED_END;
     int solarSegment = 0;
     int electricityProductionSegment = 0;
     int hydrogenTransportSegment = 0;

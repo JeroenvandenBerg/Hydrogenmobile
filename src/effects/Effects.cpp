@@ -25,8 +25,8 @@ void updateWindEffect(SystemState &state, Timers &timers) {
         );
         state.solarSegment = reverseRunningLeds(
             state.leds,
-            SOLAR_LED_START,
-            SOLAR_LED_END,
+            state.solarSegmentStart,
+            state.solarSegmentEnd,
             WIND_COLOR_ACTIVE,
             CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -35,17 +35,17 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.firstRunSolar
         );
 
-        if (state.windSegment == state.windSegmentEnd || state.solarSegment == SOLAR_LED_START) {
+        if (state.windSegment == state.windSegmentEnd || state.solarSegment == state.solarSegmentStart) {
             state.electricityProductionOn = true;
         }
     } else {
-    clearSegment(state, state.windSegmentStart, state.windSegmentEnd);
+        clearSegment(state, state.windSegmentStart, state.windSegmentEnd);
         state.firstRunWind = true;
         state.windSegment = state.windSegmentStart;
 
-    clearSegment(state, SOLAR_LED_START, SOLAR_LED_END);
+        clearSegment(state, state.solarSegmentStart, state.solarSegmentEnd);
         state.firstRunSolar = true;
-        state.solarSegment = SOLAR_LED_END;
+        state.solarSegment = state.solarSegmentEnd;
         state.electricityProductionOn = false;
     }
 }
@@ -55,8 +55,8 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
     if (state.electricityProductionOn) {
         state.electricityProductionSegment = runningLeds(
             state.leds,
-            ELECTRICITY_PRODUCTION_LED_START,
-            ELECTRICITY_PRODUCTION_LED_END,
+            state.electricityProductionSegmentStart,
+            state.electricityProductionSegmentEnd,
             WIND_COLOR_ACTIVE,
             CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -65,16 +65,16 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
             state.firstRunElectricityProduction
         );
 
-        if (state.electricityProductionSegment == ELECTRICITY_PRODUCTION_LED_END) {
+        if (state.electricityProductionSegment == state.electricityProductionSegmentEnd) {
             if (!state.electrolyserOn) {
                 state.electrolyserOn = true;
                 timers.previousMillisElectrolyser = millis();
             }
         }
     } else {
-        clearSegment(state, ELECTRICITY_PRODUCTION_LED_START, ELECTRICITY_PRODUCTION_LED_END);
+        clearSegment(state, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
         state.firstRunElectricityProduction = true;
-        state.electricityProductionSegment = ELECTRICITY_PRODUCTION_LED_START;
+        state.electricityProductionSegment = state.electricityProductionSegmentStart;
         state.electrolyserOn = false;
     }
 }
@@ -94,11 +94,11 @@ void updateElectrolyserEffect(SystemState &state, Timers &timers) {
 void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenProductionOn) {
         if (state.fadeEffect) {
-            state.fadeEffect->update(state.leds, HYDROGEN_PRODUCTION_LED_START, HYDROGEN_PRODUCTION_LED_END, HYDROGEN_PRODUCTION_COLOR_ACTIVE, state.firstRunHydrogenProduction);
+            state.fadeEffect->update(state.leds, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, HYDROGEN_PRODUCTION_COLOR_ACTIVE, state.firstRunHydrogenProduction);
         }
         state.hydrogenTransportOn = true;
     } else {
-    clearSegment(state, HYDROGEN_PRODUCTION_LED_START, HYDROGEN_PRODUCTION_LED_END);
+        clearSegment(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
         state.firstRunHydrogenProduction = true;
         state.hydrogenTransportOn = false;
     }
@@ -108,8 +108,8 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenTransportOn) {
         state.hydrogenTransportSegment = runningLeds(
             state.leds,
-            HYDROGEN_TRANSPORT_LED_START,
-            HYDROGEN_TRANSPORT_LED_END,
+            state.hydrogenTransportSegmentStart,
+            state.hydrogenTransportSegmentEnd,
             HYDROGEN_PRODUCTION_COLOR_ACTIVE,
             CRGB(HYDROGEN_PRODUCTION_COLOR_ACTIVE.r / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.g / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -121,27 +121,27 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
         if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_MID) {
             state.h2ConsumptionOn = true;
         }
-        if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_END) {
+        if (state.hydrogenTransportSegment == state.hydrogenTransportSegmentEnd) {
             state.hydrogenStorageOn = true;
             state.emptyPipe = true;
         }
     } else if (state.hydrogenStorageFull) {
-        if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_START) {
+        if (state.hydrogenTransportSegment == state.hydrogenTransportSegmentStart) {
             state.pipeEmpty = true;
         }
 
         if (state.emptyPipe) {
-            fill_solid(state.leds + HYDROGEN_TRANSPORT_LED_START, HYDROGEN_TRANSPORT_LED_END - HYDROGEN_TRANSPORT_LED_START + 1,
+            fill_solid(state.leds + state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd - state.hydrogenTransportSegmentStart + 1,
                        CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 20, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 20, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 20));
-            state.hydrogenTransportSegment = HYDROGEN_TRANSPORT_LED_START;
+            state.hydrogenTransportSegment = state.hydrogenTransportSegmentStart;
             state.emptyPipe = false;
         }
 
         if (!state.pipeEmpty) {
             state.hydrogenTransportSegment = runningLeds(
                 state.leds,
-                HYDROGEN_TRANSPORT_LED_START,
-                HYDROGEN_TRANSPORT_LED_END,
+                state.hydrogenTransportSegmentStart,
+                state.hydrogenTransportSegmentEnd,
                 HYDROGEN_PRODUCTION_COLOR_ACTIVE,
                 CRGB::Black,
                 LED_DELAY,
@@ -150,14 +150,14 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
                 state.firstRunHydrogenTransport
             );
         } else {
-            clearSegment(state, HYDROGEN_TRANSPORT_LED_START, HYDROGEN_TRANSPORT_LED_END);
+            clearSegment(state, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
         }
 
         state.hydrogenStorageOn = false;
     } else {
         // reset
         state.firstRunHydrogenTransport = true;
-        state.hydrogenTransportSegment = HYDROGEN_TRANSPORT_LED_START;
+        state.hydrogenTransportSegment = state.hydrogenTransportSegmentStart;
         state.hydrogenStorageOn = false;
         state.emptyPipe = false;
         state.pipeEmpty = false;
@@ -168,8 +168,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenStorageOn) {
         state.hydrogenStorageSegment1 = runningLeds(
             state.leds,
-            HYDROGEN_STORAGE1_LED_START,
-            HYDROGEN_STORAGE1_LED_END,
+            state.hydrogenStorage1SegmentStart,
+            state.hydrogenStorage1SegmentEnd,
             HYDROGEN_STORAGE_COLOR_ACTIVE,
             CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -179,8 +179,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
         );
         state.hydrogenStorageSegment2 = runningLeds(
             state.leds,
-            HYDROGEN_STORAGE2_LED_START,
-            HYDROGEN_STORAGE2_LED_END,
+            state.hydrogenStorage2SegmentStart,
+            state.hydrogenStorage2SegmentEnd,
             HYDROGEN_STORAGE_COLOR_ACTIVE,
             CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -189,25 +189,25 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             state.firstRunHydrogenStorage2
         );
 
-        if (state.hydrogenStorageSegment1 == HYDROGEN_STORAGE1_LED_END) {
+        if (state.hydrogenStorageSegment1 == state.hydrogenStorage1SegmentEnd) {
             state.hydrogenStorageFull = true;
         }
     } else if (state.hydrogenStorageFull) {
         if (!state.storageTimerStarted) {
             state.h2ConsumptionOn = false;
-            fill_solid(state.leds + HYDROGEN_STORAGE1_LED_START, HYDROGEN_STORAGE1_LED_END - HYDROGEN_STORAGE1_LED_START + 1, CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10));
-            fill_solid(state.leds + HYDROGEN_STORAGE2_LED_START, HYDROGEN_STORAGE2_LED_END - HYDROGEN_STORAGE2_LED_START + 1, CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10));
-            state.h2ConsumptionSegment = HYDROGEN_CONSUMPTION_LED_START;
-            state.hydrogenStorageSegment1 = HYDROGEN_STORAGE1_LED_END;
-            state.hydrogenStorageSegment2 = HYDROGEN_STORAGE2_LED_END;
+            fill_solid(state.leds + state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd - state.hydrogenStorage1SegmentStart + 1, CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10));
+            fill_solid(state.leds + state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd - state.hydrogenStorage2SegmentStart + 1, CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10));
+            state.h2ConsumptionSegment = state.hydrogenConsumptionSegmentStart;
+            state.hydrogenStorageSegment1 = state.hydrogenStorage1SegmentEnd;
+            state.hydrogenStorageSegment2 = state.hydrogenStorage2SegmentEnd;
             timers.hydrogenStorageFullTimer = millis();
             state.storageTimerStarted = true;
         }
         if (millis() - timers.hydrogenStorageFullTimer >= HYDROGEN_STORAGE_DELAY_MS) {
             state.hydrogenStorageSegment1 = reverseRunningLeds(
                 state.leds,
-                HYDROGEN_STORAGE1_LED_START,
-                HYDROGEN_STORAGE1_LED_END,
+                state.hydrogenStorage1SegmentStart,
+                state.hydrogenStorage1SegmentEnd,
                 HYDROGEN_STORAGE_COLOR_ACTIVE,
                 CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
                 LED_DELAY,
@@ -217,8 +217,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             );
             state.hydrogenStorageSegment2 = reverseRunningLeds(
                 state.leds,
-                HYDROGEN_STORAGE2_LED_START,
-                HYDROGEN_STORAGE2_LED_END,
+                state.hydrogenStorage2SegmentStart,
+                state.hydrogenStorage2SegmentEnd,
                 HYDROGEN_STORAGE_COLOR_ACTIVE,
                 CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
                 LED_DELAY,
@@ -227,16 +227,16 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
                 state.firstRunHydrogenStorage2
             );
         }
-        if (state.hydrogenStorageSegment1 == HYDROGEN_STORAGE1_LED_START || state.hydrogenStorageSegment2 == HYDROGEN_STORAGE2_LED_START) {
+        if (state.hydrogenStorageSegment1 == state.hydrogenStorage1SegmentStart || state.hydrogenStorageSegment2 == state.hydrogenStorage2SegmentStart) {
             state.storageTransportOn = true;
         }
     } else {
-    clearSegment(state, HYDROGEN_STORAGE1_LED_START, HYDROGEN_STORAGE1_LED_END);
-    clearSegment(state, HYDROGEN_STORAGE2_LED_START, HYDROGEN_STORAGE2_LED_END);
+        clearSegment(state, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+        clearSegment(state, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
         state.firstRunHydrogenStorage = true;
         state.firstRunHydrogenStorage2 = true;
-        state.hydrogenStorageSegment1 = HYDROGEN_STORAGE1_LED_START;
-        state.hydrogenStorageSegment2 = HYDROGEN_STORAGE2_LED_START;
+        state.hydrogenStorageSegment1 = state.hydrogenStorage1SegmentStart;
+        state.hydrogenStorageSegment2 = state.hydrogenStorage2SegmentStart;
         state.storageTransportOn = false;
         state.storageTimerStarted = false;
     }
@@ -246,8 +246,8 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
     if (state.h2ConsumptionOn) {
         state.h2ConsumptionSegment = runningLeds(
             state.leds,
-            HYDROGEN_CONSUMPTION_LED_START,
-            HYDROGEN_CONSUMPTION_LED_END,
+            state.hydrogenConsumptionSegmentStart,
+            state.hydrogenConsumptionSegmentEnd,
             HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
             CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -256,17 +256,17 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
             state.firstRunH2Consumption
         );
 
-        if (state.h2ConsumptionSegment == HYDROGEN_CONSUMPTION_LED_END) {
+        if (state.h2ConsumptionSegment == state.hydrogenConsumptionSegmentEnd) {
             state.fabricationOn = true;
         }
     } else if (state.storageTransportOn) {
-        if (state.storageTransportSegment == STORAGE_TRANSPORT_LED_END) {
+        if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
             state.fabricationOn = true;
         }
     } else {
-    clearSegment(state, HYDROGEN_CONSUMPTION_LED_START, HYDROGEN_CONSUMPTION_LED_END);
+        clearSegment(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
         state.firstRunH2Consumption = true;
-        state.h2ConsumptionSegment = HYDROGEN_CONSUMPTION_LED_START;
+        state.h2ConsumptionSegment = state.hydrogenConsumptionSegmentStart;
         state.fabricationOn = false;
     }
 }
@@ -274,9 +274,9 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
 // ---- Fabrication effect
 void updateFabricationEffect(SystemState &state, Timers &timers) {
     if (state.fabricationOn) {
-        fireEffect(state.leds, FABRICATION_LED_START, FABRICATION_LED_END);
+        fireEffect(state.leds, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     } else {
-        clearSegment(state, FABRICATION_LED_START, FABRICATION_LED_END);
+        clearSegment(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     }
 }
 
@@ -285,8 +285,8 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
     if (state.storageTransportOn) {
         state.storageTransportSegment = runningLeds(
             state.leds,
-            STORAGE_TRANSPORT_LED_START,
-            STORAGE_TRANSPORT_LED_END,
+            state.storageTransportSegmentStart,
+            state.storageTransportSegmentEnd,
             HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
             CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
             LED_DELAY2,
@@ -294,14 +294,14 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
             timers.previousMillisStorageTransport,
             state.firstRunStorageTransport
         );
-        if (state.storageTransportSegment == STORAGE_TRANSPORT_LED_END) {
+        if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
             state.storagePowerstationOn = true;
         }
         if (state.storagePowerstationOn) {
             state.storagePowerstationSegment = runningLeds(
                 state.leds,
-                STORAGE_POWERSTATION_LED_START,
-                STORAGE_POWERSTATION_LED_END,
+                state.storagePowerstationSegmentStart,
+                state.storagePowerstationSegmentEnd,
                 HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
                 CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
                 LED_DELAY2,
@@ -310,17 +310,17 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
                 state.firstRunStoragePowerstation
             );
         }
-        if (state.storagePowerstationSegment == STORAGE_POWERSTATION_LED_END) {
+        if (state.storagePowerstationSegment == state.storagePowerstationSegmentEnd) {
             state.electricityTransportOn = true;
             Serial.println("Electricity transport enabled");
         }
     } else {
-        clearSegment(state, STORAGE_TRANSPORT_LED_START, STORAGE_TRANSPORT_LED_END);
+        clearSegment(state, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
         state.firstRunStorageTransport = true;
-        state.storageTransportSegment = STORAGE_TRANSPORT_LED_START;
-        clearSegment(state, STORAGE_POWERSTATION_LED_START, STORAGE_POWERSTATION_LED_END);
+        state.storageTransportSegment = state.storageTransportSegmentStart;
+        clearSegment(state, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
         state.firstRunStoragePowerstation = true;
-        state.storagePowerstationSegment = STORAGE_POWERSTATION_LED_START;
+        state.storagePowerstationSegment = state.storagePowerstationSegmentStart;
         state.storagePowerstationOn = false;
     }
 }
@@ -330,8 +330,8 @@ void updateElectricityEffect(SystemState &state, Timers &timers) {
     if (state.electricityTransportOn) {
         state.electricityTransportSegment = runningLeds(
             state.leds,
-            ELECTRICITY_TRANSPORT_LED_START,
-            ELECTRICITY_TRANSPORT_LED_END,
+            state.electricityTransportSegmentStart,
+            state.electricityTransportSegmentEnd,
             ELECTRICITY_TRANSPORT_COLOR_ACTIVE,
             CRGB(ELECTRICITY_TRANSPORT_COLOR_ACTIVE.r / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.g / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.b / 10),
             LED_DELAY,
@@ -340,14 +340,14 @@ void updateElectricityEffect(SystemState &state, Timers &timers) {
             state.firstRunElectricityTransport
         );
 
-        if (state.electricityTransportSegment == ELECTRICITY_TRANSPORT_LED_END) {
+        if (state.electricityTransportSegment == state.electricityTransportSegmentEnd) {
             digitalWrite(STREET_LED_PIN, HIGH);
             state.streetLightOn = true;
         }
     } else {
-    clearSegment(state, ELECTRICITY_TRANSPORT_LED_START, ELECTRICITY_TRANSPORT_LED_END);
+        clearSegment(state, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
         state.firstRunElectricityTransport = true;
-        state.electricityTransportSegment = ELECTRICITY_TRANSPORT_LED_START;
+        state.electricityTransportSegment = state.electricityTransportSegmentStart;
         digitalWrite(STREET_LED_PIN, LOW);
         state.streetLightOn = false;
     }

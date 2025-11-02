@@ -9,6 +9,7 @@
 #define COLOR_ORDER GRB
 
 // LED Segments
+//Renewable energy production segments
 #define WIND_LED_START 0
 #define WIND_LED_END 5
 #define SOLAR_LED_START 6
@@ -16,21 +17,28 @@
 #define ELECTRICITY_PRODUCTION_LED_START 12
 #define ELECTRICITY_PRODUCTION_LED_END 16
 
+// hydrogen from electrolyser
 #define HYDROGEN_PRODUCTION_LED_START 17
 #define HYDROGEN_PRODUCTION_LED_END 22
+//hudrogen transport segment with MID used to trigger consumption
 #define HYDROGEN_TRANSPORT_LED_START 23
 #define HYDROGEN_TRANSPORT_LED_MID 28
 #define HYDROGEN_TRANSPORT_LED_END 29
+
+//hydrogen storage segments
 #define HYDROGEN_STORAGE1_LED_START 34
 #define HYDROGEN_STORAGE1_LED_END 35
 #define HYDROGEN_STORAGE2_LED_START 40
 #define HYDROGEN_STORAGE2_LED_END 45
-
+// hydrogen consumption segment
 #define HYDROGEN_CONSUMPTION_LED_START 46
 #define HYDROGEN_CONSUMPTION_LED_END 51
+
+// Fabrication segment with fire effect
 #define FABRICATION_LED_START 100
 #define FABRICATION_LED_END 110
 
+//from electricity production to electricity consumption (made out off hydrogen)
 #define ELECTRICITY_TRANSPORT_LED_START 52
 #define ELECTRICITY_TRANSPORT_LED_END 60
 
@@ -56,7 +64,7 @@
 #define ELECTRICITY_TRANSPORT_COLOR_ACTIVE CRGB(255, 255, 0)
 
 // Timing
-#define LED_DELAY 200
+#define LED_DELAY 500
 #define LED_DELAY2 100
 #define BUTTON_CHECK_INTERVAL 250
 
