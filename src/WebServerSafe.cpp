@@ -7,6 +7,7 @@
 #include "../include/SystemState.h"
 #include <Arduino.h>
 #include <FastLED.h>
+#include "../include/logo_data_uri.h"
 
 // Use the global state defined in main.cpp
 extern SystemState state;
@@ -56,10 +57,27 @@ void initWebServerSafe() {
         if (d > 10000) d = 10000; // max 10 seconds
         return d;
     };
-    auto loadEffect = [](const char* key, int defVal) {
+    auto loadEffect3 = [](const char* key, int defVal) {
         int v = prefs.getInt(key, defVal);
-        if (v != 0 && v != 1) v = 0; // 0=running, 1=fire
+        if (v < 0 || v > 2) v = defVal; // clamp to 0/1/2 for 3-option selects
         return v;
+    };
+    // Color helpers
+    auto packColor = [](CRGB c) -> uint32_t {
+        return ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | (uint32_t)c.b;
+    };
+    auto unpackColor = [](uint32_t v) -> CRGB {
+        return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    };
+    auto loadColor = [&](const char* key, CRGB def) {
+        uint32_t defHex = packColor(def);
+        uint32_t vv = prefs.getUInt(key, defHex);
+        return unpackColor(vv);
+    };
+    auto colorToHex = [](CRGB c) -> String {
+        char buf[8];
+        sprintf(buf, "%02X%02X%02X", c.r, c.g, c.b);
+        return String("#") + String(buf);
     };
 
     loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
@@ -114,21 +132,75 @@ void initWebServerSafe() {
     state.storagePowerstationDelay = loadDelay("stor_pow_delay", LED_DELAY2);
 
     // Load effect types
-    state.windEffectType = loadEffect("wind_eff", 0);
-    state.solarEffectType = loadEffect("solar_eff", 0);
-    state.electricityProductionEffectType = loadEffect("elec_prod_eff", 0);
-    state.hydrogenTransportEffectType = loadEffect("h2_trans_eff", 0);
-    state.hydrogenStorage1EffectType = loadEffect("h2_stor1_eff", 0);
-    state.hydrogenStorage2EffectType = loadEffect("h2_stor2_eff", 0);
-    state.h2ConsumptionEffectType = loadEffect("h2_cons_eff", 0);
-    state.electricityTransportEffectType = loadEffect("elec_tran_eff", 0);
-    state.storageTransportEffectType = loadEffect("stor_tran_eff", 0);
-    state.storagePowerstationEffectType = loadEffect("stor_pow_eff", 0);
+    // Load all effect types as 3-option: 0=Running, 1=Fire, 2=Fade
+    state.windEffectType = loadEffect3("wind_eff", 0);
+    state.solarEffectType = loadEffect3("solar_eff", 0);
+    state.electricityProductionEffectType = loadEffect3("elec_prod_eff", 0);
+    state.hydrogenTransportEffectType = loadEffect3("h2_trans_eff", 0);
+    state.hydrogenStorage1EffectType = loadEffect3("h2_stor1_eff", 0);
+    state.hydrogenStorage2EffectType = loadEffect3("h2_stor2_eff", 0);
+    state.h2ConsumptionEffectType = loadEffect3("h2_cons_eff", 0);
+    state.electricityTransportEffectType = loadEffect3("elec_tran_eff", 0);
+    state.storageTransportEffectType = loadEffect3("stor_tran_eff", 0);
+    state.storagePowerstationEffectType = loadEffect3("stor_pow_eff", 0);
+    state.hydrogenProductionEffectType = loadEffect3("h2_prod_eff", 0);
+    state.fabricationEffectType = loadEffect3("fabr_eff", 0);
+
+    // Load per-segment colors (defaults come from SystemState fields)
+    state.windColor = loadColor("wind_color", state.windColor);
+    state.solarColor = loadColor("solar_color", state.solarColor);
+    state.electricityProductionColor = loadColor("elec_prod_color", state.electricityProductionColor);
+    state.hydrogenProductionColor = loadColor("h2_prod_color", state.hydrogenProductionColor);
+    state.hydrogenTransportColor = loadColor("h2_trans_color", state.hydrogenTransportColor);
+    state.hydrogenStorage1Color = loadColor("h2_stor1_color", state.hydrogenStorage1Color);
+    state.hydrogenStorage2Color = loadColor("h2_stor2_color", state.hydrogenStorage2Color);
+    state.h2ConsumptionColor = loadColor("h2_cons_color", state.h2ConsumptionColor);
+    state.fabricationColor = loadColor("fabr_color", state.fabricationColor);
+    state.electricityTransportColor = loadColor("elec_tran_color", state.electricityTransportColor);
+    state.storageTransportColor = loadColor("stor_tran_color", state.storageTransportColor);
+    state.storagePowerstationColor = loadColor("stor_pow_color", state.storagePowerstationColor);
+
+    // One-time back-compat migration: previous mappings differed for Hydrogen Production and Fabrication
+    // Guard with a flag so we don't remap new values on every boot
+    if (!prefs.getBool("effects_v2", false)) {
+        // Old Hydrogen Production: 0=Fade,1=Fire,2=Running => map to 0=Running,1=Fire,2=Fade
+        if (prefs.isKey("h2_prod_eff")) {
+            int old = prefs.getInt("h2_prod_eff", state.hydrogenProductionEffectType);
+            int mapped = old;
+            if (old == 2) mapped = 0;
+            else if (old == 1) mapped = 1;
+            else if (old == 0) mapped = 2;
+            if (mapped != old) {
+                prefs.putInt("h2_prod_eff", mapped);
+            }
+            state.hydrogenProductionEffectType = mapped;
+        }
+        // Old Fabrication: 0=Fire,1=Fade,2=Running => map to 0=Running,1=Fire,2=Fade
+        if (prefs.isKey("fabr_eff")) {
+            int old = prefs.getInt("fabr_eff", state.fabricationEffectType);
+            int mapped = old;
+            if (old == 2) mapped = 0;
+            else if (old == 0) mapped = 1;
+            else if (old == 1) mapped = 2;
+            if (mapped != old) {
+                prefs.putInt("fabr_eff", mapped);
+            }
+            state.fabricationEffectType = mapped;
+        }
+        prefs.putBool("effects_v2", true);
+    }
+    // Non-running segments direction and delay (for running option)
+    state.hydrogenProductionDirForward = loadDir("h2_prod_dir", true);
+    state.fabricationDirForward = loadDir("fabr_dir", true);
+    state.hydrogenProductionDelay = loadDelay("h2_prod_delay", LED_DELAY);
+    state.fabricationDelay = loadDelay("fabr_delay", LED_DELAY);
 
     // Serve root page with all segments
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Segments</title>"
             "<style>body{font-family:Arial,sans-serif;max-width:600px;margin:20px auto;padding:10px;}"
+            ".logo{text-align:center;margin:20px 0;}"
+            ".logo img{max-width:200px;height:auto;}"
             "h3{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:5px;}"
             ".segment{background:#f9f9f9;padding:10px;margin:10px 0;border-radius:5px;}"
             "input{width:60px;padding:5px;margin:5px;}"
@@ -141,6 +213,7 @@ void initWebServerSafe() {
             ".stop{background:#f0ad4e;}"
             ".stop:hover{background:#ec971f;}"
             "</style></head><body>"
+            "<div class='logo'><img src='" + String(LOGO_DATA_URI) + "' alt='OakZo Logo'></div>"
             "<h3>LED Segment Configuration</h3>";
         
         if (state.testMode) {
@@ -152,47 +225,62 @@ void initWebServerSafe() {
         
     page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
         
-        // Helper lambda to create segment row with effect, direction, delay, enable and test button
-        auto addSegmentDir = [&](const char* name, const char* startName, const char* endName,
-                                 const char* dirName, const char* enName, const char* delayName, const char* effName,
-                                 int startVal, int endVal, bool dirVal, bool enVal, int delayVal, int effVal) {
+    // Helper lambda to create segment row with effect, direction, delay, color, enable and test button
+    auto colorToHexLocal = [](CRGB c) -> String { char buf[8]; sprintf(buf, "%02X%02X%02X", c.r, c.g, c.b); return String("#") + String(buf); };
+    auto addSegmentDir = [&](const char* name, const char* startName, const char* endName,
+                 const char* dirName, const char* enName, const char* delayName, const char* effName,
+                 const char* colorName, CRGB colorVal,
+                 int startVal, int endVal, bool dirVal, bool enVal, int delayVal, int effVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
                 "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
                 " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
-                " Effect: <select name='" + String(effName) + "'>"
-                "<option value='0'" + String(effVal==0 ? " selected" : "") + ">Running</option>"
-                "<option value='1'" + String(effVal==1 ? " selected" : "") + ">Fire</option>"
-                "</select>"
-                " Direction: <select name='" + String(dirName) + "'>"
-                "<option value='1" + String(dirVal ? " selected" : "") + ">Forward</option>"
-                "<option value='0" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
-                "</select>"
-                " Delay(ms): <input type='number' name='" + String(delayName) + "' min=1 max=10000 value=" + String(delayVal) + " style='width:70px;'>"
+        " Effect: <select name='" + String(effName) + "' onchange='toggleDirDelay(this,\"" + String(dirName) + "\",\"" + String(delayName) + "\",\"" + String(colorName) + "\")'>"
+        "<option value='0'" + String(effVal==0 ? " selected" : "") + ">Running</option>"
+        "<option value='1'" + String(effVal==1 ? " selected" : "") + ">Fire</option>"
+        "<option value='2'" + String(effVal==2 ? " selected" : "") + ">Fade</option>"
+        "</select>"
+        " <span id='ctrl_" + String(dirName) + "' style='display:" + String(effVal==0 ? "inline" : "none") + ";'>Direction: <select name='" + String(dirName) + "'>"
+        "<option value='1'" + String(dirVal ? " selected" : "") + ">Forward</option>"
+        "<option value='0'" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
+        "</select></span>"
+    " <span id='ctrl_" + String(delayName) + "' style='display:" + String((effVal==0 || effVal==2) ? "inline" : "none") + ";'>Delay(ms): <input type='number' name='" + String(delayName) + "' min=1 max=10000 value=" + String(delayVal) + " style='width:70px;'></span>"
+    " <span id='ctrl_" + String(colorName) + "' style='display:" + String((effVal==0 || effVal==2) ? "inline" : "none") + ";'> Color: <input type='color' name='" + String(colorName) + "' value='" + colorToHexLocal(colorVal) + "'></span>"
                 " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1" + String(enVal ? "' checked" : "'") + ">"
-                "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "')\">Test</button>"
+                "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "','" + String(effName) + "','" + String(delayName) + "','" + String(colorName) + "')\">Test</button>"
                 "</div>";
         };
-    auto addSegmentSimple = [&](const char* name, const char* startName, const char* endName, const char* enName, int startVal, int endVal, bool enVal) {
+    auto addSegmentSimple = [&](const char* name, const char* startName, const char* endName, const char* enName, const char* effName, const char* dirName, const char* delayName, const char* colorName, CRGB colorVal, int startVal, int endVal, bool enVal, int effVal, bool dirVal, int delayVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
-            "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
-            " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
-            " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1'" + String(enVal ? " checked" : "") + ">"
-            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','')\">Test</button>"
-            "</div>";
+                "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
+                " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
+    " Effect: <select name='" + String(effName) + "' onchange='toggleDirDelay(this,\"" + String(dirName) + "\",\"" + String(delayName) + "\",\"" + String(colorName) + "\")'>"
+    "<option value='0'" + String(effVal==0 ? " selected" : "") + ">Running</option>"
+    "<option value='1'" + String(effVal==1 ? " selected" : "") + ">Fire</option>"
+    "<option value='2'" + String(effVal==2 ? " selected" : "") + ">Fade</option>"
+                "</select>"
+    " <span id='ctrl_" + String(dirName) + "' style='display:" + String(effVal==0 ? "inline" : "none") + ";'>Direction: <select name='" + String(dirName) + "'>"
+        "<option value='1'" + String(dirVal ? " selected" : "") + ">Forward</option>"
+        "<option value='0'" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
+        "</select></span>"
+    " <span id='ctrl_" + String(delayName) + "' style='display:" + String((effVal==0 || effVal==2) ? "inline" : "none") + ";'>Delay(ms): <input type='number' name='" + String(delayName) + "' min=1 max=10000 value=" + String(delayVal) + " style='width:70px;'></span>"
+    " <span id='ctrl_" + String(colorName) + "' style='display:" + String((effVal==0 || effVal==2) ? "inline" : "none") + ";'> Color: <input type='color' name='" + String(colorName) + "' value='" + colorToHexLocal(colorVal) + "'></span>"
+                " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1" + String(enVal ? "' checked" : "'") + ">"
+        "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "','" + String(effName) + "','" + String(delayName) + "','" + String(colorName) + "')\">Test</button>"
+                "</div>";
         };
         
-    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType);
-    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType);
-    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", "elec_prod_delay", "elec_prod_eff", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled, state.electricityProductionDelay, state.electricityProductionEffectType);
-    addSegmentSimple("Hydrogen Production", "h2_prod_s", "h2_prod_e", "h2_prod_en", state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionEnabled);
-    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType);
-    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType);
-    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType);
-    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", "h2_cons_eff", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled, state.h2ConsumptionDelay, state.h2ConsumptionEffectType);
-    addSegmentSimple("Fabrication", "fabr_start", "fabr_end", "fabr_en", state.fabricationSegmentStart, state.fabricationSegmentEnd, state.fabricationEnabled);
-    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", "elec_tran_delay", "elec_tran_eff", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled, state.electricityTransportDelay, state.electricityTransportEffectType);
-    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", "stor_tran_delay", "stor_tran_eff", state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward, state.storageTransportEnabled, state.storageTransportDelay, state.storageTransportEffectType);
-    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", "stor_pow_delay", "stor_pow_eff", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled, state.storagePowerstationDelay, state.storagePowerstationEffectType);
+    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", state.windColor, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType);
+    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", state.solarColor, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType);
+    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", "elec_prod_delay", "elec_prod_eff", "elec_prod_color", state.electricityProductionColor, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled, state.electricityProductionDelay, state.electricityProductionEffectType);
+    addSegmentSimple("Hydrogen Production", "h2_prod_s", "h2_prod_e", "h2_prod_en", "h2_prod_eff", "h2_prod_dir", "h2_prod_delay", "h2_prod_color", state.hydrogenProductionColor, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionEnabled, state.hydrogenProductionEffectType, state.hydrogenProductionDirForward, state.hydrogenProductionDelay);
+    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", state.hydrogenTransportColor, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType);
+    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", state.hydrogenStorage1Color, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType);
+    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", state.hydrogenStorage2Color, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType);
+    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", "h2_cons_eff", "h2_cons_color", state.h2ConsumptionColor, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled, state.h2ConsumptionDelay, state.h2ConsumptionEffectType);
+    addSegmentSimple("Fabrication", "fabr_start", "fabr_end", "fabr_en", "fabr_eff", "fabr_dir", "fabr_delay", "fabr_color", state.fabricationColor, state.fabricationSegmentStart, state.fabricationSegmentEnd, state.fabricationEnabled, state.fabricationEffectType, state.fabricationDirForward, state.fabricationDelay);
+    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", "elec_tran_delay", "elec_tran_eff", "elec_tran_color", state.electricityTransportColor, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled, state.electricityTransportDelay, state.electricityTransportEffectType);
+    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", "stor_tran_delay", "stor_tran_eff", "stor_tran_color", state.storageTransportColor, state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward, state.storageTransportEnabled, state.storageTransportDelay, state.storageTransportEffectType);
+    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", "stor_pow_delay", "stor_pow_eff", "stor_pow_color", state.storagePowerstationColor, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled, state.storagePowerstationDelay, state.storagePowerstationEffectType);
 
         // Non-segment control: Electrolyser enable
         page += String("<div class='segment'><b>Electrolyser</b><br> Enabled: ") +
@@ -201,12 +289,30 @@ void initWebServerSafe() {
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
             "<script>\n"
-            "function testSegment(startName,endName,dirName){\n"
+            "function toggleDirDelay(sel,dirName,delayName,colorName){\n"
+            "  const v = sel.value;\n"
+            "  const dirCtrl = document.getElementById('ctrl_'+dirName);\n"
+            "  const delayCtrl = document.getElementById('ctrl_'+delayName);\n"
+            "  const colorCtrl = document.getElementById('ctrl_'+colorName);\n"
+            "  // Direction only for Running (0)\n"
+            "  if(dirCtrl) dirCtrl.style.display = (v==='0') ? 'inline' : 'none';\n"
+            "  // Delay for Running (0) and Fade (2)\n"
+            "  if(delayCtrl) delayCtrl.style.display = (v==='0' || v==='2') ? 'inline' : 'none';\n"
+            "  // Color for Running (0) and Fade (2)\n"
+            "  if(colorCtrl) colorCtrl.style.display = (v==='0' || v==='2') ? 'inline' : 'none';\n"
+            "}\n"
+            "function testSegment(startName,endName,dirName,effName,delayName,colorName){\n"
             "  const s=document.getElementById(startName).value;\n"
             "  const e=document.getElementById(endName).value;\n"
             "  let d='1';\n"
             "  if(dirName){ const sel=document.querySelector(\"select[name='\"+dirName+\"']\"); if(sel){ d=sel.value; } }\n"
-            "  const body=new URLSearchParams({start:s,end:e,dir:d}).toString();\n"
+            "  let eff='0';\n"
+            "  if(effName){ const effSel=document.querySelector(\"select[name='\"+effName+\"']\"); if(effSel){ eff=effSel.value; } }\n"
+            "  let delay='50';\n"
+            "  if(delayName){ const delayInput=document.querySelector(\"input[name='\"+delayName+\"']\"); if(delayInput){ delay=delayInput.value; } }\n"
+            "  let color='#FFFFFF';\n"
+            "  if(colorName){ const colorInput=document.querySelector(\"input[name='\"+colorName+\"']\"); if(colorInput){ color=colorInput.value; } }\n"
+            "  const body=new URLSearchParams({start:s,end:e,dir:d,eff:eff,delay:delay,color:color}).toString();\n"
             "  fetch('/test',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Test request failed'));\n"
@@ -249,18 +355,20 @@ void initWebServerSafe() {
             outDelay = d;
             return true;
         };
-        auto getEffect = [&](const char* name, int &outEff) -> bool {
+        auto getEffect3 = [&](const char* name, int &outEff) -> bool {
             if (!request->hasParam(name, true)) return false;
             int v = request->getParam(name, true)->value().toInt();
-            if (v != 0 && v != 1) return false;
+            if (v < 0 || v > 2) return false;
             outEff = v;
             return true;
         };
 
     int ws, we, ss, se, eps, epe, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
-    bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir;
-    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly;
+    bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir, hpdir, fbdir;
+    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly, hpdly, fbdly;
     int weff, seff, epeff, hteff, h1eff, h2eff, hceff, eteff, steff, speff;
+    int hpeff, fbeff; // hydrogen production and fabrication effects
+    uint32_t wcol, scol, epcol, hpcol, htcol, hs1col, hs2col, hccol, fbcol, etcol, stcol, spcol;
         
         if (!getSegment("wind_start", "wind_end", ws, we) ||
             !getSegment("solar_start", "solar_end", ss, se) ||
@@ -284,16 +392,33 @@ void initWebServerSafe() {
             !getDir("elec_tran_dir", etdir) ||
             !getDir("stor_tran_dir", stdir) ||
             !getDir("stor_pow_dir", spdir) ||
-            !getEffect("wind_eff", weff) ||
-            !getEffect("solar_eff", seff) ||
-            !getEffect("elec_prod_eff", epeff) ||
-            !getEffect("h2_trans_eff", hteff) ||
-            !getEffect("h2_stor1_eff", h1eff) ||
-            !getEffect("h2_stor2_eff", h2eff) ||
-            !getEffect("h2_cons_eff", hceff) ||
-            !getEffect("elec_tran_eff", eteff) ||
-            !getEffect("stor_tran_eff", steff) ||
-            !getEffect("stor_pow_eff", speff) ||
+            !getDir("h2_prod_dir", hpdir) ||
+            !getDir("fabr_dir", fbdir) ||
+            !getEffect3("wind_eff", weff) ||
+            !getEffect3("solar_eff", seff) ||
+            !getEffect3("elec_prod_eff", epeff) ||
+            !getEffect3("h2_trans_eff", hteff) ||
+            !getEffect3("h2_stor1_eff", h1eff) ||
+            !getEffect3("h2_stor2_eff", h2eff) ||
+            !getEffect3("h2_cons_eff", hceff) ||
+            !getEffect3("elec_tran_eff", eteff) ||
+            !getEffect3("stor_tran_eff", steff) ||
+            !getEffect3("stor_pow_eff", speff) ||
+            !getEffect3("h2_prod_eff", hpeff) ||
+            !getEffect3("fabr_eff", fbeff) ||
+            // Colors must be present when saving
+            !request->hasParam("wind_color", true) ||
+            !request->hasParam("solar_color", true) ||
+            !request->hasParam("elec_prod_color", true) ||
+            !request->hasParam("h2_prod_color", true) ||
+            !request->hasParam("h2_trans_color", true) ||
+            !request->hasParam("h2_stor1_color", true) ||
+            !request->hasParam("h2_stor2_color", true) ||
+            !request->hasParam("h2_cons_color", true) ||
+            !request->hasParam("fabr_color", true) ||
+            !request->hasParam("elec_tran_color", true) ||
+            !request->hasParam("stor_tran_color", true) ||
+            !request->hasParam("stor_pow_color", true) ||
             !getDelay("wind_delay", wdly) ||
             !getDelay("solar_delay", sdly) ||
             !getDelay("elec_prod_delay", epdly) ||
@@ -303,8 +428,35 @@ void initWebServerSafe() {
             !getDelay("h2_cons_delay", hcdly) ||
             !getDelay("elec_tran_delay", etdly) ||
             !getDelay("stor_tran_delay", stdly) ||
-            !getDelay("stor_pow_delay", spdly)) {
+            !getDelay("stor_pow_delay", spdly) ||
+            !getDelay("h2_prod_delay", hpdly) ||
+            !getDelay("fabr_delay", fbdly)) {
             request->send(400, "text/plain", "Missing or invalid parameters");
+            return;
+        }
+
+        // Parse colors (#RRGGBB)
+        auto parseHexColor = [&](const char* name, uint32_t &out) -> bool {
+            String s = request->getParam(name, true)->value();
+            if (s.length() != 7 || s[0] != '#') return false;
+            char *endptr = nullptr;
+            String hex = s.substring(1);
+            out = strtoul(hex.c_str(), &endptr, 16);
+            return (endptr && *endptr == '\0');
+        };
+        if (!parseHexColor("wind_color", wcol) ||
+            !parseHexColor("solar_color", scol) ||
+            !parseHexColor("elec_prod_color", epcol) ||
+            !parseHexColor("h2_prod_color", hpcol) ||
+            !parseHexColor("h2_trans_color", htcol) ||
+            !parseHexColor("h2_stor1_color", hs1col) ||
+            !parseHexColor("h2_stor2_color", hs2col) ||
+            !parseHexColor("h2_cons_color", hccol) ||
+            !parseHexColor("fabr_color", fbcol) ||
+            !parseHexColor("elec_tran_color", etcol) ||
+            !parseHexColor("stor_tran_color", stcol) ||
+            !parseHexColor("stor_pow_color", spcol)) {
+            request->send(400, "text/plain", "Invalid color format");
             return;
         }
 
@@ -354,12 +506,12 @@ void initWebServerSafe() {
     prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen); prefs.putInt("wind_delay", wdly);
     prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen); prefs.putInt("solar_delay", sdly);
     prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen); prefs.putInt("elec_prod_delay", epdly);
-    prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe); prefs.putBool("h2_prod_en", hpen);
+    prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe); prefs.putBool("h2_prod_en", hpen); prefs.putBool("h2_prod_dir", hpdir); prefs.putInt("h2_prod_delay", hpdly);
     prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten); prefs.putInt("h2_trans_delay", htdly);
     prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir); prefs.putInt("h2_stor1_delay", h1dly);
     prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen); prefs.putInt("h2_stor2_delay", h2dly);
     prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen); prefs.putInt("h2_cons_delay", hcdly);
-    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben);
+    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben); prefs.putBool("fabr_dir", fbdir); prefs.putInt("fabr_delay", fbdly);
     prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten); prefs.putInt("elec_tran_delay", etdly);
     prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten); prefs.putInt("stor_tran_delay", stdly);
     prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen); prefs.putInt("stor_pow_delay", spdly);
@@ -374,7 +526,22 @@ void initWebServerSafe() {
     prefs.putInt("elec_tran_eff", eteff);
     prefs.putInt("stor_tran_eff", steff);
     prefs.putInt("stor_pow_eff", speff);
+    prefs.putInt("h2_prod_eff", hpeff);
+    prefs.putInt("fabr_eff", fbeff);
     prefs.putBool("electrolyser_en", elyen);
+    // Save colors
+    prefs.putUInt("wind_color", wcol);
+    prefs.putUInt("solar_color", scol);
+    prefs.putUInt("elec_prod_color", epcol);
+    prefs.putUInt("h2_prod_color", hpcol);
+    prefs.putUInt("h2_trans_color", htcol);
+    prefs.putUInt("h2_stor1_color", hs1col);
+    prefs.putUInt("h2_stor2_color", hs2col);
+    prefs.putUInt("h2_cons_color", hccol);
+    prefs.putUInt("fabr_color", fbcol);
+    prefs.putUInt("elec_tran_color", etcol);
+    prefs.putUInt("stor_tran_color", stcol);
+    prefs.putUInt("stor_pow_color", spcol);
 
     // Update directions in runtime state
     state.windDirForward = wdir;
@@ -387,6 +554,8 @@ void initWebServerSafe() {
     state.electricityTransportDirForward = etdir;
     state.storageTransportDirForward = stdir;
     state.storagePowerstationDirForward = spdir;
+    state.hydrogenProductionDirForward = hpdir;
+    state.fabricationDirForward = fbdir;
 
     // Update enabled flags in runtime state
     state.windEnabled = wen;
@@ -413,6 +582,8 @@ void initWebServerSafe() {
     state.electricityTransportDelay = etdly;
     state.storageTransportDelay = stdly;
     state.storagePowerstationDelay = spdly;
+    state.hydrogenProductionDelay = hpdly;
+    state.fabricationDelay = fbdly;
 
     // Update effect types in runtime
     state.windEffectType = weff;
@@ -425,6 +596,23 @@ void initWebServerSafe() {
     state.electricityTransportEffectType = eteff;
     state.storageTransportEffectType = steff;
     state.storagePowerstationEffectType = speff;
+    state.hydrogenProductionEffectType = hpeff;
+    state.fabricationEffectType = fbeff;
+
+    // Update colors in runtime
+    auto unpackColorLocal = [](uint32_t v) -> CRGB { return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); };
+    state.windColor = unpackColorLocal(wcol);
+    state.solarColor = unpackColorLocal(scol);
+    state.electricityProductionColor = unpackColorLocal(epcol);
+    state.hydrogenProductionColor = unpackColorLocal(hpcol);
+    state.hydrogenTransportColor = unpackColorLocal(htcol);
+    state.hydrogenStorage1Color = unpackColorLocal(hs1col);
+    state.hydrogenStorage2Color = unpackColorLocal(hs2col);
+    state.h2ConsumptionColor = unpackColorLocal(hccol);
+    state.fabricationColor = unpackColorLocal(fbcol);
+    state.electricityTransportColor = unpackColorLocal(etcol);
+    state.storageTransportColor = unpackColorLocal(stcol);
+    state.storagePowerstationColor = unpackColorLocal(spcol);
 
         request->redirect("/");
     });
@@ -444,6 +632,31 @@ void initWebServerSafe() {
             dir = (v == "1");
         }
 
+        // Capture effect type, delay, and color if provided
+        int effectType = 0;
+        int delay = 500;
+        CRGB color = CRGB::White;
+        
+        if (request->hasParam("eff", true)) {
+            effectType = request->getParam("eff", true)->value().toInt();
+            if (effectType < 0 || effectType > 2) effectType = 0;
+        }
+        
+        if (request->hasParam("delay", true)) {
+            delay = request->getParam("delay", true)->value().toInt();
+            if (delay < 1) delay = 1;
+            if (delay > 10000) delay = 10000;
+        }
+        
+        if (request->hasParam("color", true)) {
+            String colorStr = request->getParam("color", true)->value();
+            if (colorStr.length() == 7 && colorStr[0] == '#') {
+                String hex = colorStr.substring(1);
+                uint32_t rgb = strtoul(hex.c_str(), nullptr, 16);
+                color = CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+            }
+        }
+
         if (start < 0 || start >= NUM_LEDS || end < 0 || end >= NUM_LEDS || start > end) {
             request->send(400, "text/plain", "Invalid range");
             return;
@@ -456,6 +669,11 @@ void initWebServerSafe() {
         // force runTestMode() to (re)initialize and clear by using an out-of-range sentinel
         state.testSegmentIndex = -1;
         state.testDirForward = dir;
+        state.testEffectType = effectType;
+        state.testColor = color;
+        state.testDelay = delay;
+        state.testPhase = 0; // Start with LED check phase
+        state.testPhaseStartTime = millis();
 
         // Immediately clear all LEDs so test starts from a blank strip
         fill_solid(state.leds, NUM_LEDS, CRGB::Black);

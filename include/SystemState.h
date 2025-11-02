@@ -18,6 +18,7 @@ struct Timers {
     uint32_t previousMillisElectrolyser = 0;
     uint32_t previousMillisHydrogenTransport = 0;
     uint32_t previousMillisHydrogenProduction = 0;
+    uint32_t previousMillisFabrication = 0;
     uint32_t previousMillisHydrogenStorage = 0;
     uint32_t previousMillisHydrogenStorage2 = 0;
     uint32_t previousMillisH2Consumption = 0;
@@ -61,6 +62,11 @@ struct SystemState {
     int testSegmentEnd = 0;
     int testSegmentIndex = 0;
     bool testDirForward = true;
+    int testEffectType = 0; // 0=Running, 1=Fire, 2=Fade
+    CRGB testColor = CRGB::White;
+    int testDelay = 500;
+    int testPhase = 0; // 0=LED check, 1=effect demo
+    uint32_t testPhaseStartTime = 0;
 
     // Enable flags per segment/effect
     bool windEnabled = true;
@@ -110,6 +116,7 @@ struct SystemState {
     int hydrogenStorageSegment1 = 0;
     int hydrogenStorageSegment2 = 0;
     int h2ConsumptionSegment = 0;
+    int fabricationSegment = 0;
     int electricityTransportSegment = 0;
     int storageTransportSegment = 0;
     int storagePowerstationSegment = 0;
@@ -125,6 +132,8 @@ struct SystemState {
     bool electricityTransportDirForward = true;
     bool storageTransportDirForward = true;
     bool storagePowerstationDirForward = true;
+    bool hydrogenProductionDirForward = true;
+    bool fabricationDirForward = true;
 
     // Per-segment LED animation delays (milliseconds)
     int windDelay = LED_DELAY;
@@ -137,6 +146,8 @@ struct SystemState {
     int electricityTransportDelay = LED_DELAY;
     int storageTransportDelay = LED_DELAY2;
     int storagePowerstationDelay = LED_DELAY2;
+    int hydrogenProductionDelay = LED_DELAY;
+    int fabricationDelay = LED_DELAY;
 
     // Effect type per running segment (0 = running, 1 = fire)
     int windEffectType = 0;
@@ -150,6 +161,11 @@ struct SystemState {
     int storageTransportEffectType = 0;
     int storagePowerstationEffectType = 0;
 
+    // Effect types for non-running segments
+    // Unified mapping for all segments: 0=Running, 1=Fire, 2=Fade
+    int hydrogenProductionEffectType = 0;
+    int fabricationEffectType = 0;
+
     // First-run flags
     bool firstRunWind = true;
     bool firstRunSolar = true;
@@ -159,6 +175,7 @@ struct SystemState {
     bool firstRunHydrogenStorage = true;
     bool firstRunHydrogenStorage2 = true;
     bool firstRunH2Consumption = true;
+    bool firstRunFabrication = true;
     bool firstRunElectricityTransport = true;
     bool firstRunStorageTransport = true;
     bool firstRunStoragePowerstation = true;
@@ -167,5 +184,19 @@ struct SystemState {
 
     // fadeEffect instance pointer (allocated during setup)
     fadeLeds *fadeEffect = nullptr;
+
+    // Per-segment colors (used for Running and Fade)
+    CRGB windColor = WIND_COLOR_ACTIVE;
+    CRGB solarColor = WIND_COLOR_ACTIVE; // using same default as wind unless configured separately
+    CRGB electricityProductionColor = WIND_COLOR_ACTIVE;
+    CRGB hydrogenProductionColor = HYDROGEN_PRODUCTION_COLOR_ACTIVE;
+    CRGB hydrogenTransportColor = HYDROGEN_PRODUCTION_COLOR_ACTIVE;
+    CRGB hydrogenStorage1Color = HYDROGEN_STORAGE_COLOR_ACTIVE;
+    CRGB hydrogenStorage2Color = HYDROGEN_STORAGE_COLOR_ACTIVE;
+    CRGB h2ConsumptionColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
+    CRGB fabricationColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
+    CRGB electricityTransportColor = ELECTRICITY_TRANSPORT_COLOR_ACTIVE;
+    CRGB storageTransportColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
+    CRGB storagePowerstationColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
 };
 // End of SystemState.h

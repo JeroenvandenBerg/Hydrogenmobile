@@ -4,8 +4,15 @@ fadeLeds::fadeLeds(uint32_t fadeDuration, uint32_t)
     : fadeDuration(fadeDuration), previousMillis(0), fadeIn(true) {}
 
 void fadeLeds::update(CRGB* leds, int start, int end, CRGB color, bool& firstRun) {
+    // Use the default fadeDuration set on the instance
+    update(leds, start, end, color, firstRun, fadeDuration);
+}
+
+void fadeLeds::update(CRGB* leds, int start, int end, CRGB color, bool& firstRun, uint32_t durationOverride) {
     uint32_t currentMillis = millis();
     uint32_t elapsed = currentMillis - previousMillis;
+    uint32_t duration = durationOverride > 0 ? durationOverride : fadeDuration;
+    if (duration < 1) duration = 1;
 
     // Handle the first run to initialize LEDs at 5% brightness
     if (firstRun) {
@@ -23,14 +30,14 @@ void fadeLeds::update(CRGB* leds, int start, int end, CRGB color, bool& firstRun
     }
 
     // Check if it's time to switch between fade-in and fade-out
-    if (elapsed >= fadeDuration) {
+    if (elapsed >= duration) {
         fadeIn = !fadeIn;  // Toggle between fading in and out
         previousMillis = currentMillis;  // Reset the timer
         elapsed = 0;  // Reset elapsed time for smooth transition
     }
 
     // Calculate the fade progress
-    float progress = (float)elapsed / fadeDuration;
+    float progress = (float)elapsed / duration;
     if (fadeIn) {
         progress = 0.05 + (progress * 0.95);  // Scale progress from 5% to 100%
     } else {

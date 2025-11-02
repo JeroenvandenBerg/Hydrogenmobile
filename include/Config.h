@@ -36,7 +36,7 @@
 
 // Fabrication segment with fire effect
 #define FABRICATION_LED_START 100
-#define FABRICATION_LED_END 110
+#define FABRICATION_LED_END 109
 
 //from electricity production to electricity consumption (made out off hydrogen)
 #define ELECTRICITY_TRANSPORT_LED_START 52

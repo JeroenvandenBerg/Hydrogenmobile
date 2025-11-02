@@ -2,6 +2,7 @@
 #include "FastLED.h"
 #include "Config.h"
 #include "fadeLeds.h"
+#include "fireEffect.h"
 #include "Hardware.h"
 #include "LEDs.h"
 #include "effects/Effects.h"
@@ -193,35 +194,94 @@ void resetAllVariables() {
 
 void runTestMode() {
     static uint32_t previousMillis = 0;
+    static bool firstRunTest = true;
 
     // Initialize when entering test (sentinel set by /test handler)
     if (state.testSegmentIndex < state.testSegmentStart || state.testSegmentIndex > state.testSegmentEnd) {
         state.testSegmentIndex = state.testDirForward ? state.testSegmentStart : state.testSegmentEnd;
         previousMillis = millis();
+        firstRunTest = true;
+        state.testPhase = 0;
+        state.testPhaseStartTime = millis();
     }
 
-    // Run a simple running LED effect on the test segment
-    if (millis() - previousMillis >= LED_DELAY) {
-        previousMillis = millis();
-
-        // Clear the segment
-        for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
-            state.leds[i] = CRGB::Black;
+    // Phase 0: LED Check - run a simple white LED sequence for 5 seconds
+    if (state.testPhase == 0) {
+        if (millis() - state.testPhaseStartTime >= 5000) {
+            // Move to effect demo phase
+            state.testPhase = 1;
+            state.testPhaseStartTime = millis();
+            state.testSegmentIndex = state.testDirForward ? state.testSegmentStart : state.testSegmentEnd;
+            firstRunTest = true;
+            // Clear for next phase
+            for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
+                state.leds[i] = CRGB::Black;
+            }
+            return;
         }
 
-        // Light up current position
-        state.leds[state.testSegmentIndex] = CRGB::White;
+        // Simple running white LED to verify segment range
+        if (millis() - previousMillis >= state.testDelay) { // Use configured test delay
+            previousMillis = millis();
 
-        // Move to next LED based on direction
-        if (state.testDirForward) {
-            state.testSegmentIndex++;
-            if (state.testSegmentIndex > state.testSegmentEnd) {
-                state.testSegmentIndex = state.testSegmentStart;
+            // Clear the segment
+            for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
+                state.leds[i] = CRGB::Black;
             }
+
+            // Light up current position in white
+            state.leds[state.testSegmentIndex] = CRGB::White;
+
+            // Move to next LED based on direction
+            if (state.testDirForward) {
+                state.testSegmentIndex++;
+                if (state.testSegmentIndex > state.testSegmentEnd) {
+                    state.testSegmentIndex = state.testSegmentStart;
+                }
+            } else {
+                state.testSegmentIndex--;
+                if (state.testSegmentIndex < state.testSegmentStart) {
+                    state.testSegmentIndex = state.testSegmentEnd;
+                }
+            }
+        }
+    }
+    // Phase 1: Effect Demo - run the selected effect
+    else if (state.testPhase == 1) {
+        if (state.testEffectType == 1) {
+            // Fire effect
+            fireEffect(state.leds, state.testSegmentStart, state.testSegmentEnd);
+        } else if (state.testEffectType == 2) {
+            // Fade effect
+            if (state.fadeEffect) {
+                state.fadeEffect->update(state.leds, state.testSegmentStart, state.testSegmentEnd, state.testColor, firstRunTest, state.testDelay);
+            }
+            firstRunTest = false;
         } else {
-            state.testSegmentIndex--;
-            if (state.testSegmentIndex < state.testSegmentStart) {
-                state.testSegmentIndex = state.testSegmentEnd;
+            // Running effect (default)
+            if (millis() - previousMillis >= state.testDelay) {
+                previousMillis = millis();
+
+                // Clear the segment
+                for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
+                    state.leds[i] = CRGB::Black;
+                }
+
+                // Light up current position with selected color
+                state.leds[state.testSegmentIndex] = state.testColor;
+
+                // Move to next LED based on direction
+                if (state.testDirForward) {
+                    state.testSegmentIndex++;
+                    if (state.testSegmentIndex > state.testSegmentEnd) {
+                        state.testSegmentIndex = state.testSegmentStart;
+                    }
+                } else {
+                    state.testSegmentIndex--;
+                    if (state.testSegmentIndex < state.testSegmentStart) {
+                        state.testSegmentIndex = state.testSegmentEnd;
+                    }
+                }
             }
         }
     }
