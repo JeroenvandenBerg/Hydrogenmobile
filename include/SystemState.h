@@ -99,6 +99,18 @@ struct SystemState {
     int storageTransportSegment = 0;
     int storagePowerstationSegment = 0;
 
+    // Direction flags for running effects (true = forward, false = reverse)
+    bool windDirForward = true;
+    bool solarDirForward = false; // historically ran reverse
+    bool electricityProductionDirForward = true;
+    bool hydrogenTransportDirForward = true;
+    bool hydrogenStorage1DirForward = true; // fill direction; emptying will be opposite
+    bool hydrogenStorage2DirForward = true; // fill direction; emptying will be opposite
+    bool h2ConsumptionDirForward = true;
+    bool electricityTransportDirForward = true;
+    bool storageTransportDirForward = true;
+    bool storagePowerstationDirForward = true;
+
     // First-run flags
     bool firstRunWind = true;
     bool firstRunSolar = true;

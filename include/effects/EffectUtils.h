@@ -54,4 +54,32 @@ inline int runSegmentReverse(SystemState &state,
                               firstRun);
 }
 
+// Run either forward or reverse based on the flag
+inline int runSegmentDir(SystemState &state,
+                         int start,
+                         int end,
+                         const CRGB &headColor,
+                         const CRGB &tailColor,
+                         uint16_t delayMs,
+                         int &segmentIndex,
+                         uint32_t &previousMillis,
+                         bool &firstRun,
+                         bool forward) {
+    if (forward) {
+        return runSegmentForward(state, start, end, headColor, tailColor, delayMs, segmentIndex, previousMillis, firstRun);
+    } else {
+        return runSegmentReverse(state, start, end, headColor, tailColor, delayMs, segmentIndex, previousMillis, firstRun);
+    }
+}
+
+// Helper to compute terminal bound based on direction
+inline int terminalBound(bool forward, int start, int end) {
+    return forward ? end : start;
+}
+
+// Helper to compute initial index based on direction
+inline int initialIndex(bool forward, int start, int end) {
+    return forward ? start : end;
+}
+
 } // namespace EffectUtils
