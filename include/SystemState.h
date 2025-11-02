@@ -126,6 +126,18 @@ struct SystemState {
     bool storageTransportDirForward = true;
     bool storagePowerstationDirForward = true;
 
+    // Per-segment LED animation delays (milliseconds)
+    int windDelay = LED_DELAY;
+    int solarDelay = LED_DELAY;
+    int electricityProductionDelay = LED_DELAY;
+    int hydrogenTransportDelay = LED_DELAY;
+    int hydrogenStorage1Delay = LED_DELAY;
+    int hydrogenStorage2Delay = LED_DELAY;
+    int h2ConsumptionDelay = LED_DELAY;
+    int electricityTransportDelay = LED_DELAY;
+    int storageTransportDelay = LED_DELAY2;
+    int storagePowerstationDelay = LED_DELAY2;
+
     // First-run flags
     bool firstRunWind = true;
     bool firstRunSolar = true;

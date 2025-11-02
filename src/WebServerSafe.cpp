@@ -50,6 +50,12 @@ void initWebServerSafe() {
     auto loadEn = [](const char* key, bool defVal) {
         return prefs.getBool(key, defVal);
     };
+    auto loadDelay = [](const char* key, int defVal) {
+        int d = prefs.getInt(key, defVal);
+        if (d < 1) d = 1; // minimum 1ms
+        if (d > 10000) d = 10000; // max 10 seconds
+        return d;
+    };
 
     loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
     loadSegment("solar_start", "solar_end", SOLAR_LED_START, SOLAR_LED_END, state.solarSegmentStart, state.solarSegmentEnd);
@@ -90,6 +96,18 @@ void initWebServerSafe() {
     state.storageTransportEnabled = loadEn("stor_tran_en", true);
     state.storagePowerstationEnabled = loadEn("stor_pow_en", true);
 
+    // Load delays
+    state.windDelay = loadDelay("wind_delay", LED_DELAY);
+    state.solarDelay = loadDelay("solar_delay", LED_DELAY);
+    state.electricityProductionDelay = loadDelay("elec_prod_delay", LED_DELAY);
+    state.hydrogenTransportDelay = loadDelay("h2_trans_delay", LED_DELAY);
+    state.hydrogenStorage1Delay = loadDelay("h2_stor1_delay", LED_DELAY);
+    state.hydrogenStorage2Delay = loadDelay("h2_stor2_delay", LED_DELAY);
+    state.h2ConsumptionDelay = loadDelay("h2_cons_delay", LED_DELAY);
+    state.electricityTransportDelay = loadDelay("elec_tran_delay", LED_DELAY);
+    state.storageTransportDelay = loadDelay("stor_tran_delay", LED_DELAY2);
+    state.storagePowerstationDelay = loadDelay("stor_pow_delay", LED_DELAY2);
+
     // Serve root page with all segments
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Segments</title>"
@@ -118,7 +136,7 @@ void initWebServerSafe() {
     page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
         
         // Helper lambda to create segment row with test button
-    auto addSegmentDir = [&](const char* name, const char* startName, const char* endName, const char* dirName, const char* enName, int startVal, int endVal, bool dirVal, bool enVal) {
+    auto addSegmentDir = [&](const char* name, const char* startName, const char* endName, const char* dirName, const char* enName, const char* delayName, int startVal, int endVal, bool dirVal, bool enVal, int delayVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
             "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
             " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
@@ -126,6 +144,7 @@ void initWebServerSafe() {
             "<option value='1'" + String(dirVal ? " selected" : "") + ">Forward</option>"
             "<option value='0'" + String(!dirVal ? " selected" : "") + ">Reverse</option>"
             "</select>"
+            " Delay(ms): <input type='number' name='" + String(delayName) + "' min=1 max=10000 value=" + String(delayVal) + " style='width:70px;'>"
             " Enabled: <input type='checkbox' name='" + String(enName) + "' value='1'" + String(enVal ? " checked" : "") + ">"
             "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "','" + String(dirName) + "')\">Test</button>"
             "</div>";
@@ -139,18 +158,18 @@ void initWebServerSafe() {
             "</div>";
         };
         
-    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", "wind_en", state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled);
-    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", "solar_en", state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled);
-    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled);
+    addSegmentDir("Wind", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay);
+    addSegmentDir("Solar", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay);
+    addSegmentDir("Electricity Production", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", "elec_prod_delay", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled, state.electricityProductionDelay);
     addSegmentSimple("Hydrogen Production", "h2_prod_s", "h2_prod_e", "h2_prod_en", state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionEnabled);
-    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled);
-    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled);
-    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled);
-    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled);
+    addSegmentDir("Hydrogen Transport", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay);
+    addSegmentDir("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay);
+    addSegmentDir("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay);
+    addSegmentDir("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled, state.h2ConsumptionDelay);
     addSegmentSimple("Fabrication", "fabr_start", "fabr_end", "fabr_en", state.fabricationSegmentStart, state.fabricationSegmentEnd, state.fabricationEnabled);
-    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled);
-    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward, state.storageTransportEnabled);
-    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled);
+    addSegmentDir("Electricity Transport", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", "elec_tran_delay", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled, state.electricityTransportDelay);
+    addSegmentDir("Storage Transport", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", "stor_tran_delay", state.storageTransportSegmentStart, state.storageTransportSegmentEnd, state.storageTransportDirForward, state.storageTransportEnabled, state.storageTransportDelay);
+    addSegmentDir("Storage Powerstation", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", "stor_pow_delay", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled, state.storagePowerstationDelay);
 
         // Non-segment control: Electrolyser enable
         page += String("<div class='segment'><b>Electrolyser</b><br> Enabled: ") +
@@ -200,9 +219,17 @@ void initWebServerSafe() {
             String v = request->getParam(name, true)->value();
             return (v == "1" || v == "on" || v == "true");
         };
+        auto getDelay = [&](const char* name, int &outDelay) -> bool {
+            if (!request->hasParam(name, true)) return false;
+            int d = request->getParam(name, true)->value().toInt();
+            if (d < 1 || d > 10000) return false;
+            outDelay = d;
+            return true;
+        };
 
     int ws, we, ss, se, eps, epe, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
     bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir;
+    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly;
         
         if (!getSegment("wind_start", "wind_end", ws, we) ||
             !getSegment("solar_start", "solar_end", ss, se) ||
@@ -225,7 +252,17 @@ void initWebServerSafe() {
             !getDir("h2_cons_dir", hcdir) ||
             !getDir("elec_tran_dir", etdir) ||
             !getDir("stor_tran_dir", stdir) ||
-            !getDir("stor_pow_dir", spdir)) {
+            !getDir("stor_pow_dir", spdir) ||
+            !getDelay("wind_delay", wdly) ||
+            !getDelay("solar_delay", sdly) ||
+            !getDelay("elec_prod_delay", epdly) ||
+            !getDelay("h2_trans_delay", htdly) ||
+            !getDelay("h2_stor1_delay", h1dly) ||
+            !getDelay("h2_stor2_delay", h2dly) ||
+            !getDelay("h2_cons_delay", hcdly) ||
+            !getDelay("elec_tran_delay", etdly) ||
+            !getDelay("stor_tran_delay", stdly) ||
+            !getDelay("stor_pow_delay", spdly)) {
             request->send(400, "text/plain", "Missing or invalid parameters");
             return;
         }
@@ -272,19 +309,19 @@ void initWebServerSafe() {
         state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
 
-    // Save all to preferences (directions and enables too)
-    prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen);
-    prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen);
-    prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen);
+    // Save all to preferences (directions, enables, and delays too)
+    prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen); prefs.putInt("wind_delay", wdly);
+    prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen); prefs.putInt("solar_delay", sdly);
+    prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen); prefs.putInt("elec_prod_delay", epdly);
     prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe); prefs.putBool("h2_prod_en", hpen);
-    prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten);
-    prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir);
-    prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen);
-    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen);
+    prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten); prefs.putInt("h2_trans_delay", htdly);
+    prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir); prefs.putInt("h2_stor1_delay", h1dly);
+    prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen); prefs.putInt("h2_stor2_delay", h2dly);
+    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen); prefs.putInt("h2_cons_delay", hcdly);
     prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben);
-    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten);
-    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten);
-    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen);
+    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten); prefs.putInt("elec_tran_delay", etdly);
+    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten); prefs.putInt("stor_tran_delay", stdly);
+    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen); prefs.putInt("stor_pow_delay", spdly);
     prefs.putBool("electrolyser_en", elyen);
 
     // Update directions in runtime state
@@ -312,6 +349,18 @@ void initWebServerSafe() {
     state.electricityTransportEnabled = eten;
     state.storageTransportEnabled = sten;
     state.storagePowerstationEnabled = spen;
+
+    // Update delays in runtime state
+    state.windDelay = wdly;
+    state.solarDelay = sdly;
+    state.electricityProductionDelay = epdly;
+    state.hydrogenTransportDelay = htdly;
+    state.hydrogenStorage1Delay = h1dly;
+    state.hydrogenStorage2Delay = h2dly;
+    state.h2ConsumptionDelay = hcdly;
+    state.electricityTransportDelay = etdly;
+    state.storageTransportDelay = stdly;
+    state.storagePowerstationDelay = spdly;
 
         request->redirect("/");
     });
