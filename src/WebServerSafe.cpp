@@ -79,17 +79,15 @@ void initWebServerSafe() {
                     "<button type='submit' class='stop'>Stop Test</button></form></div>";
         }
         
-        page += "<form method=\"POST\" action=\"/update\">";
+    page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
         
         // Helper lambda to create segment row with test button
-        auto addSegment = [&](const char* name, const char* startName, const char* endName, int startVal, int endVal) {
+    auto addSegment = [&](const char* name, const char* startName, const char* endName, int startVal, int endVal) {
             page += "<div class='segment'><b>" + String(name) + "</b><br>"
-                    "Start: <input type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
-                    " End: <input type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
-                    "<form method='POST' action='/test' style='display:inline;margin-left:10px;'>"
-                    "<input type='hidden' name='start' value='" + String(startVal) + "'>"
-                    "<input type='hidden' name='end' value='" + String(endVal) + "'>"
-                    "<button type='submit' class='test'>Test</button></form></div>";
+            "Start: <input id='" + String(startName) + "' type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
+            " End: <input id='" + String(endName) + "' type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
+            "<button type='button' class='test' onclick=\"testSegment('" + String(startName) + "','" + String(endName) + "')\">Test</button>"
+            "</div>";
         };
         
         addSegment("Wind", "wind_start", "wind_end", state.windSegmentStart, state.windSegmentEnd);
@@ -106,6 +104,16 @@ void initWebServerSafe() {
         addSegment("Storage Powerstation", "stor_pow_s", "stor_pow_e", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
+            "<script>\n"
+            "function testSegment(startName,endName){\n"
+            "  const s=document.getElementById(startName).value;\n"
+            "  const e=document.getElementById(endName).value;\n"
+            "  const body=new URLSearchParams({start:s,end:e}).toString();\n"
+            "  fetch('/test',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(()=>alert('Test request failed'));\n"
+            "}\n"
+            "</script>"
             "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
             "<button type='submit' class='restart'>Restart ESP</button></form></body></html>";
         

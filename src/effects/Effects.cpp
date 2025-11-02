@@ -5,6 +5,7 @@
 #include "../../lib/runningLed/runningLed.h"
 #include "../../lib/fireEffect/fireEffect.h"
 #include "../../include/SystemState.h"
+#include "../../include/effects/EffectUtils.h"
 #include <Arduino.h>
 
 // fadeEffect is owned by the runtime SystemState (state.fadeEffect)
@@ -12,8 +13,8 @@
 // ---- Wind effect
 void updateWindEffect(SystemState &state, Timers &timers) {
     if (state.windOn) {
-        state.windSegment = runningLeds(
-            state.leds,
+        state.windSegment = EffectUtils::runSegmentForward(
+            state,
             state.windSegmentStart,
             state.windSegmentEnd,
             WIND_COLOR_ACTIVE,
@@ -23,8 +24,8 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             timers.previousMillisWind,
             state.firstRunWind
         );
-        state.solarSegment = reverseRunningLeds(
-            state.leds,
+        state.solarSegment = EffectUtils::runSegmentReverse(
+            state,
             state.solarSegmentStart,
             state.solarSegmentEnd,
             WIND_COLOR_ACTIVE,
@@ -39,11 +40,11 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.electricityProductionOn = true;
         }
     } else {
-        clearSegment(state, state.windSegmentStart, state.windSegmentEnd);
+        EffectUtils::clearRange(state, state.windSegmentStart, state.windSegmentEnd);
         state.firstRunWind = true;
         state.windSegment = state.windSegmentStart;
 
-        clearSegment(state, state.solarSegmentStart, state.solarSegmentEnd);
+        EffectUtils::clearRange(state, state.solarSegmentStart, state.solarSegmentEnd);
         state.firstRunSolar = true;
         state.solarSegment = state.solarSegmentEnd;
         state.electricityProductionOn = false;
@@ -53,8 +54,8 @@ void updateWindEffect(SystemState &state, Timers &timers) {
 // ---- Electricity production effect
 void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
     if (state.electricityProductionOn) {
-        state.electricityProductionSegment = runningLeds(
-            state.leds,
+        state.electricityProductionSegment = EffectUtils::runSegmentForward(
+            state,
             state.electricityProductionSegmentStart,
             state.electricityProductionSegmentEnd,
             WIND_COLOR_ACTIVE,
@@ -72,7 +73,7 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
             }
         }
     } else {
-        clearSegment(state, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
+        EffectUtils::clearRange(state, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
         state.firstRunElectricityProduction = true;
         state.electricityProductionSegment = state.electricityProductionSegmentStart;
         state.electrolyserOn = false;
@@ -98,7 +99,7 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
         }
         state.hydrogenTransportOn = true;
     } else {
-        clearSegment(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+        EffectUtils::clearRange(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
         state.firstRunHydrogenProduction = true;
         state.hydrogenTransportOn = false;
     }
@@ -106,8 +107,8 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
 
 void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenTransportOn) {
-        state.hydrogenTransportSegment = runningLeds(
-            state.leds,
+        state.hydrogenTransportSegment = EffectUtils::runSegmentForward(
+            state,
             state.hydrogenTransportSegmentStart,
             state.hydrogenTransportSegmentEnd,
             HYDROGEN_PRODUCTION_COLOR_ACTIVE,
@@ -138,8 +139,8 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
         }
 
         if (!state.pipeEmpty) {
-            state.hydrogenTransportSegment = runningLeds(
-                state.leds,
+            state.hydrogenTransportSegment = EffectUtils::runSegmentForward(
+                state,
                 state.hydrogenTransportSegmentStart,
                 state.hydrogenTransportSegmentEnd,
                 HYDROGEN_PRODUCTION_COLOR_ACTIVE,
@@ -150,7 +151,7 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
                 state.firstRunHydrogenTransport
             );
         } else {
-            clearSegment(state, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+            EffectUtils::clearRange(state, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
         }
 
         state.hydrogenStorageOn = false;
@@ -166,8 +167,8 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
 
 void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenStorageOn) {
-        state.hydrogenStorageSegment1 = runningLeds(
-            state.leds,
+        state.hydrogenStorageSegment1 = EffectUtils::runSegmentForward(
+            state,
             state.hydrogenStorage1SegmentStart,
             state.hydrogenStorage1SegmentEnd,
             HYDROGEN_STORAGE_COLOR_ACTIVE,
@@ -177,8 +178,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             timers.previousMillisHydrogenStorage,
             state.firstRunHydrogenStorage
         );
-        state.hydrogenStorageSegment2 = runningLeds(
-            state.leds,
+        state.hydrogenStorageSegment2 = EffectUtils::runSegmentForward(
+            state,
             state.hydrogenStorage2SegmentStart,
             state.hydrogenStorage2SegmentEnd,
             HYDROGEN_STORAGE_COLOR_ACTIVE,
@@ -204,8 +205,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             state.storageTimerStarted = true;
         }
         if (millis() - timers.hydrogenStorageFullTimer >= HYDROGEN_STORAGE_DELAY_MS) {
-            state.hydrogenStorageSegment1 = reverseRunningLeds(
-                state.leds,
+            state.hydrogenStorageSegment1 = EffectUtils::runSegmentReverse(
+                state,
                 state.hydrogenStorage1SegmentStart,
                 state.hydrogenStorage1SegmentEnd,
                 HYDROGEN_STORAGE_COLOR_ACTIVE,
@@ -215,8 +216,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
                 timers.previousMillisHydrogenStorage,
                 state.firstRunHydrogenStorage
             );
-            state.hydrogenStorageSegment2 = reverseRunningLeds(
-                state.leds,
+            state.hydrogenStorageSegment2 = EffectUtils::runSegmentReverse(
+                state,
                 state.hydrogenStorage2SegmentStart,
                 state.hydrogenStorage2SegmentEnd,
                 HYDROGEN_STORAGE_COLOR_ACTIVE,
@@ -231,8 +232,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             state.storageTransportOn = true;
         }
     } else {
-        clearSegment(state, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
-        clearSegment(state, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+    EffectUtils::clearRange(state, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+    EffectUtils::clearRange(state, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
         state.firstRunHydrogenStorage = true;
         state.firstRunHydrogenStorage2 = true;
         state.hydrogenStorageSegment1 = state.hydrogenStorage1SegmentStart;
@@ -244,8 +245,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
 
 void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
     if (state.h2ConsumptionOn) {
-        state.h2ConsumptionSegment = runningLeds(
-            state.leds,
+        state.h2ConsumptionSegment = EffectUtils::runSegmentForward(
+            state,
             state.hydrogenConsumptionSegmentStart,
             state.hydrogenConsumptionSegmentEnd,
             HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
@@ -264,7 +265,7 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
             state.fabricationOn = true;
         }
     } else {
-        clearSegment(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
+    EffectUtils::clearRange(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
         state.firstRunH2Consumption = true;
         state.h2ConsumptionSegment = state.hydrogenConsumptionSegmentStart;
         state.fabricationOn = false;
@@ -276,15 +277,15 @@ void updateFabricationEffect(SystemState &state, Timers &timers) {
     if (state.fabricationOn) {
         fireEffect(state.leds, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     } else {
-        clearSegment(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
+    EffectUtils::clearRange(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     }
 }
 
 // ---- Storage transport / powerstation
 void updateStorageTransportEffect(SystemState &state, Timers &timers) {
     if (state.storageTransportOn) {
-        state.storageTransportSegment = runningLeds(
-            state.leds,
+        state.storageTransportSegment = EffectUtils::runSegmentForward(
+            state,
             state.storageTransportSegmentStart,
             state.storageTransportSegmentEnd,
             HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
@@ -298,8 +299,8 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
             state.storagePowerstationOn = true;
         }
         if (state.storagePowerstationOn) {
-            state.storagePowerstationSegment = runningLeds(
-                state.leds,
+            state.storagePowerstationSegment = EffectUtils::runSegmentForward(
+                state,
                 state.storagePowerstationSegmentStart,
                 state.storagePowerstationSegmentEnd,
                 HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
@@ -315,10 +316,10 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
             Serial.println("Electricity transport enabled");
         }
     } else {
-        clearSegment(state, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
+    EffectUtils::clearRange(state, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
         state.firstRunStorageTransport = true;
         state.storageTransportSegment = state.storageTransportSegmentStart;
-        clearSegment(state, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
+    EffectUtils::clearRange(state, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
         state.firstRunStoragePowerstation = true;
         state.storagePowerstationSegment = state.storagePowerstationSegmentStart;
         state.storagePowerstationOn = false;
@@ -328,8 +329,8 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
 // ---- Electricity transport
 void updateElectricityEffect(SystemState &state, Timers &timers) {
     if (state.electricityTransportOn) {
-        state.electricityTransportSegment = runningLeds(
-            state.leds,
+        state.electricityTransportSegment = EffectUtils::runSegmentForward(
+            state,
             state.electricityTransportSegmentStart,
             state.electricityTransportSegmentEnd,
             ELECTRICITY_TRANSPORT_COLOR_ACTIVE,
@@ -345,7 +346,7 @@ void updateElectricityEffect(SystemState &state, Timers &timers) {
             state.streetLightOn = true;
         }
     } else {
-        clearSegment(state, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
+    EffectUtils::clearRange(state, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
         state.firstRunElectricityTransport = true;
         state.electricityTransportSegment = state.electricityTransportSegmentStart;
         digitalWrite(STREET_LED_PIN, LOW);
