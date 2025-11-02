@@ -55,6 +55,12 @@ struct SystemState {
     bool emptyPipe = false;
     bool pipeEmpty = false;
 
+    // Test mode
+    bool testMode = false;
+    int testSegmentStart = 0;
+    int testSegmentEnd = 0;
+    int testSegmentIndex = 0;
+
     // Segment indices
     int windSegment = 0;
     // Allow runtime overrides (persisted by web UI) for all segment start/end

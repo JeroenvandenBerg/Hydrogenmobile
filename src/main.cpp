@@ -23,6 +23,7 @@ void updateSegments();
 void updateRelays();
 void checkButtonState();
 void resetAllVariables();
+void runTestMode();
 
 // ========================== Setup & Loop ==========================
 void setup() {
@@ -42,9 +43,13 @@ void setup() {
 }
 
 void loop() {
-    checkButtonState();
-    updateSegments();
-    updateRelays();
+    if (state.testMode) {
+        runTestMode();
+    } else {
+        checkButtonState();
+        updateSegments();
+        updateRelays();
+    }
     FastLED.show();
 }
 
@@ -183,4 +188,43 @@ void resetAllVariables() {
     timers.generalTimerStartTime = 0;
     state.generalTimerActive = false;
     state.storageTimerStarted = false;
+}
+
+void runTestMode() {
+    static uint32_t previousMillis = 0;
+    static bool firstRun = true;
+    
+    // Clear all LEDs on first entry to test mode
+    if (firstRun) {
+        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+        state.testSegmentIndex = state.testSegmentStart;
+        firstRun = false;
+        previousMillis = millis();
+    }
+    
+    // Run a simple running LED effect on the test segment
+    if (millis() - previousMillis >= LED_DELAY) {
+        previousMillis = millis();
+        
+        // Clear the segment
+        for (int i = state.testSegmentStart; i <= state.testSegmentEnd; i++) {
+            state.leds[i] = CRGB::Black;
+        }
+        
+        // Light up current position
+        state.leds[state.testSegmentIndex] = CRGB::White;
+        
+        // Move to next LED
+        state.testSegmentIndex++;
+        if (state.testSegmentIndex > state.testSegmentEnd) {
+            state.testSegmentIndex = state.testSegmentStart;
+        }
+    }
+    
+    // Reset firstRun when exiting test mode
+    if (!state.testMode) {
+        firstRun = true;
+        fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+        resetAllVariables();
+    }
 }

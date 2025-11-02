@@ -65,46 +65,45 @@ void initWebServerSafe() {
             "button:hover{background:#45a049;}"
             ".restart{background:#d9534f;}"
             ".restart:hover{background:#c9302c;}"
+            ".test{background:#5bc0de;padding:8px 12px;}"
+            ".test:hover{background:#46b8da;}"
+            ".stop{background:#f0ad4e;}"
+            ".stop:hover{background:#ec971f;}"
             "</style></head><body>"
-            "<h3>LED Segment Configuration</h3>"
-            "<form method=\"POST\" action=\"/update\">";
+            "<h3>LED Segment Configuration</h3>";
         
-        // Define each segment for the form
-        page += "<div class='segment'><b>Wind</b><br>Start: <input type='number' name='wind_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.windSegmentStart) + ">";
-        page += " End: <input type='number' name='wind_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.windSegmentEnd) + "></div>";
+        if (state.testMode) {
+            page += "<div style='background:#fff3cd;padding:15px;border-radius:5px;margin:10px 0;border:2px solid #ffc107;'>"
+                    "<b>TEST MODE ACTIVE</b><br>Testing segment " + String(state.testSegmentStart) + "-" + String(state.testSegmentEnd) + "<br>"
+                    "<form method='POST' action='/stoptest' style='display:inline;'>"
+                    "<button type='submit' class='stop'>Stop Test</button></form></div>";
+        }
         
-        page += "<div class='segment'><b>Solar</b><br>Start: <input type='number' name='solar_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.solarSegmentStart) + ">";
-        page += " End: <input type='number' name='solar_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.solarSegmentEnd) + "></div>";
+        page += "<form method=\"POST\" action=\"/update\">";
         
-        page += "<div class='segment'><b>Electricity Production</b><br>Start: <input type='number' name='elec_prod_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityProductionSegmentStart) + ">";
-        page += " End: <input type='number' name='elec_prod_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityProductionSegmentEnd) + "></div>";
+        // Helper lambda to create segment row with test button
+        auto addSegment = [&](const char* name, const char* startName, const char* endName, int startVal, int endVal) {
+            page += "<div class='segment'><b>" + String(name) + "</b><br>"
+                    "Start: <input type='number' name='" + String(startName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(startVal) + ">"
+                    " End: <input type='number' name='" + String(endName) + "' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(endVal) + ">"
+                    "<form method='POST' action='/test' style='display:inline;margin-left:10px;'>"
+                    "<input type='hidden' name='start' value='" + String(startVal) + "'>"
+                    "<input type='hidden' name='end' value='" + String(endVal) + "'>"
+                    "<button type='submit' class='test'>Test</button></form></div>";
+        };
         
-        page += "<div class='segment'><b>Hydrogen Production</b><br>Start: <input type='number' name='h2_prod_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenProductionSegmentStart) + ">";
-        page += " End: <input type='number' name='h2_prod_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenProductionSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Hydrogen Transport</b><br>Start: <input type='number' name='h2_trans_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenTransportSegmentStart) + ">";
-        page += " End: <input type='number' name='h2_trans_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenTransportSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Hydrogen Storage 1</b><br>Start: <input type='number' name='h2_stor1_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage1SegmentStart) + ">";
-        page += " End: <input type='number' name='h2_stor1_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage1SegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Hydrogen Storage 2</b><br>Start: <input type='number' name='h2_stor2_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage2SegmentStart) + ">";
-        page += " End: <input type='number' name='h2_stor2_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenStorage2SegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Hydrogen Consumption</b><br>Start: <input type='number' name='h2_cons_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenConsumptionSegmentStart) + ">";
-        page += " End: <input type='number' name='h2_cons_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.hydrogenConsumptionSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Fabrication</b><br>Start: <input type='number' name='fabr_start' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.fabricationSegmentStart) + ">";
-        page += " End: <input type='number' name='fabr_end' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.fabricationSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Electricity Transport</b><br>Start: <input type='number' name='elec_tran_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityTransportSegmentStart) + ">";
-        page += " End: <input type='number' name='elec_tran_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.electricityTransportSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Storage Transport</b><br>Start: <input type='number' name='stor_tran_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storageTransportSegmentStart) + ">";
-        page += " End: <input type='number' name='stor_tran_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storageTransportSegmentEnd) + "></div>";
-        
-        page += "<div class='segment'><b>Storage Powerstation</b><br>Start: <input type='number' name='stor_pow_s' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storagePowerstationSegmentStart) + ">";
-        page += " End: <input type='number' name='stor_pow_e' min=0 max=" + String(NUM_LEDS-1) + " value=" + String(state.storagePowerstationSegmentEnd) + "></div>";
+        addSegment("Wind", "wind_start", "wind_end", state.windSegmentStart, state.windSegmentEnd);
+        addSegment("Solar", "solar_start", "solar_end", state.solarSegmentStart, state.solarSegmentEnd);
+        addSegment("Electricity Production", "elec_prod_s", "elec_prod_e", state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
+        addSegment("Hydrogen Production", "h2_prod_s", "h2_prod_e", state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+        addSegment("Hydrogen Transport", "h2_trans_s", "h2_trans_e", state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+        addSegment("Hydrogen Storage 1", "h2_stor1_s", "h2_stor1_e", state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+        addSegment("Hydrogen Storage 2", "h2_stor2_s", "h2_stor2_e", state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+        addSegment("Hydrogen Consumption", "h2_cons_s", "h2_cons_e", state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
+        addSegment("Fabrication", "fabr_start", "fabr_end", state.fabricationSegmentStart, state.fabricationSegmentEnd);
+        addSegment("Electricity Transport", "elec_tran_s", "elec_tran_e", state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
+        addSegment("Storage Transport", "stor_tran_s", "stor_tran_e", state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
+        addSegment("Storage Powerstation", "stor_pow_s", "stor_pow_e", state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
             "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
@@ -172,6 +171,36 @@ void initWebServerSafe() {
         state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
 
+        request->redirect("/");
+    });
+
+    // Test handler - starts test mode for a segment
+    server.on("/test", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!request->hasParam("start", true) || !request->hasParam("end", true)) {
+            request->send(400, "text/plain", "Missing parameters");
+            return;
+        }
+
+        int start = request->getParam("start", true)->value().toInt();
+        int end = request->getParam("end", true)->value().toInt();
+
+        if (start < 0 || start >= NUM_LEDS || end < 0 || end >= NUM_LEDS || start > end) {
+            request->send(400, "text/plain", "Invalid range");
+            return;
+        }
+
+        // Enter test mode
+        state.testMode = true;
+        state.testSegmentStart = start;
+        state.testSegmentEnd = end;
+        state.testSegmentIndex = start;
+
+        request->redirect("/");
+    });
+
+    // Stop test handler
+    server.on("/stoptest", HTTP_POST, [](AsyncWebServerRequest *request){
+        state.testMode = false;
         request->redirect("/");
     });
 
