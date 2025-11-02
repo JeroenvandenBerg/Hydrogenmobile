@@ -82,4 +82,26 @@ inline int initialIndex(bool forward, int start, int end) {
     return forward ? start : end;
 }
 
+// Advance a segment index without drawing, emulating running effect timing and wrap
+inline void advanceIndexDir(uint16_t delayMs,
+                            int start,
+                            int end,
+                            bool forward,
+                            int &segmentIndex,
+                            uint32_t &previousMillis,
+                            bool &firstRun) {
+    uint32_t now = millis();
+    if (now - previousMillis >= delayMs) {
+        previousMillis = now;
+        if (forward) {
+            segmentIndex++;
+            if (segmentIndex > end) segmentIndex = start;
+        } else {
+            segmentIndex--;
+            if (segmentIndex < start) segmentIndex = end;
+        }
+        firstRun = false;
+    }
+}
+
 } // namespace EffectUtils

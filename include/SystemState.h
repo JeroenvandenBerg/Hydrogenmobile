@@ -138,6 +138,18 @@ struct SystemState {
     int storageTransportDelay = LED_DELAY2;
     int storagePowerstationDelay = LED_DELAY2;
 
+    // Effect type per running segment (0 = running, 1 = fire)
+    int windEffectType = 0;
+    int solarEffectType = 0;
+    int electricityProductionEffectType = 0;
+    int hydrogenTransportEffectType = 0;
+    int hydrogenStorage1EffectType = 0;
+    int hydrogenStorage2EffectType = 0;
+    int h2ConsumptionEffectType = 0;
+    int electricityTransportEffectType = 0;
+    int storageTransportEffectType = 0;
+    int storagePowerstationEffectType = 0;
+
     // First-run flags
     bool firstRunWind = true;
     bool firstRunSolar = true;

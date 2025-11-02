@@ -15,18 +15,29 @@ void updateWindEffect(SystemState &state, Timers &timers) {
     if (state.windOn) {
         // Wind segment
         if (state.windEnabled) {
-            state.windSegment = EffectUtils::runSegmentDir(
-                state,
-                state.windSegmentStart,
-                state.windSegmentEnd,
-                WIND_COLOR_ACTIVE,
-                CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
-                state.windDelay,
-                state.windSegment,
-                timers.previousMillisWind,
-                state.firstRunWind,
-                state.windDirForward
-            );
+            if (state.windEffectType == 1) {
+                fireEffect(state.leds, state.windSegmentStart, state.windSegmentEnd);
+                EffectUtils::advanceIndexDir(state.windDelay,
+                                             state.windSegmentStart,
+                                             state.windSegmentEnd,
+                                             state.windDirForward,
+                                             state.windSegment,
+                                             timers.previousMillisWind,
+                                             state.firstRunWind);
+            } else {
+                state.windSegment = EffectUtils::runSegmentDir(
+                    state,
+                    state.windSegmentStart,
+                    state.windSegmentEnd,
+                    WIND_COLOR_ACTIVE,
+                    CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
+                    state.windDelay,
+                    state.windSegment,
+                    timers.previousMillisWind,
+                    state.firstRunWind,
+                    state.windDirForward
+                );
+            }
         } else {
             EffectUtils::clearRange(state, state.windSegmentStart, state.windSegmentEnd);
             state.firstRunWind = true;
@@ -35,18 +46,29 @@ void updateWindEffect(SystemState &state, Timers &timers) {
 
         // Solar segment
         if (state.solarEnabled) {
-            state.solarSegment = EffectUtils::runSegmentDir(
-                state,
-                state.solarSegmentStart,
-                state.solarSegmentEnd,
-                WIND_COLOR_ACTIVE,
-                CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
-                state.solarDelay,
-                state.solarSegment,
-                timers.previousMillisSolar,
-                state.firstRunSolar,
-                state.solarDirForward
-            );
+            if (state.solarEffectType == 1) {
+                fireEffect(state.leds, state.solarSegmentStart, state.solarSegmentEnd);
+                EffectUtils::advanceIndexDir(state.solarDelay,
+                                             state.solarSegmentStart,
+                                             state.solarSegmentEnd,
+                                             state.solarDirForward,
+                                             state.solarSegment,
+                                             timers.previousMillisSolar,
+                                             state.firstRunSolar);
+            } else {
+                state.solarSegment = EffectUtils::runSegmentDir(
+                    state,
+                    state.solarSegmentStart,
+                    state.solarSegmentEnd,
+                    WIND_COLOR_ACTIVE,
+                    CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
+                    state.solarDelay,
+                    state.solarSegment,
+                    timers.previousMillisSolar,
+                    state.firstRunSolar,
+                    state.solarDirForward
+                );
+            }
         } else {
             EffectUtils::clearRange(state, state.solarSegmentStart, state.solarSegmentEnd);
             state.firstRunSolar = true;
@@ -75,18 +97,29 @@ void updateWindEffect(SystemState &state, Timers &timers) {
 // ---- Electricity production effect
 void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
     if (state.electricityProductionOn && state.electricityProductionEnabled) {
-        state.electricityProductionSegment = EffectUtils::runSegmentDir(
-            state,
-            state.electricityProductionSegmentStart,
-            state.electricityProductionSegmentEnd,
-            WIND_COLOR_ACTIVE,
-            CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
-            state.electricityProductionDelay,
-            state.electricityProductionSegment,
-            timers.previousMillisElectricityProduction,
-            state.firstRunElectricityProduction,
-            state.electricityProductionDirForward
-        );
+        if (state.electricityProductionEffectType == 1) {
+            fireEffect(state.leds, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
+            EffectUtils::advanceIndexDir(state.electricityProductionDelay,
+                                         state.electricityProductionSegmentStart,
+                                         state.electricityProductionSegmentEnd,
+                                         state.electricityProductionDirForward,
+                                         state.electricityProductionSegment,
+                                         timers.previousMillisElectricityProduction,
+                                         state.firstRunElectricityProduction);
+        } else {
+            state.electricityProductionSegment = EffectUtils::runSegmentDir(
+                state,
+                state.electricityProductionSegmentStart,
+                state.electricityProductionSegmentEnd,
+                WIND_COLOR_ACTIVE,
+                CRGB(WIND_COLOR_ACTIVE.r / 10, WIND_COLOR_ACTIVE.g / 10, WIND_COLOR_ACTIVE.b / 10),
+                state.electricityProductionDelay,
+                state.electricityProductionSegment,
+                timers.previousMillisElectricityProduction,
+                state.firstRunElectricityProduction,
+                state.electricityProductionDirForward
+            );
+        }
 
         if (state.electricityProductionSegment == EffectUtils::terminalBound(state.electricityProductionDirForward, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd)) {
             if (!state.electrolyserOn && state.electrolyserEnabled) {
@@ -133,18 +166,29 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
 
 void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenTransportOn && state.hydrogenTransportEnabled) {
-        state.hydrogenTransportSegment = EffectUtils::runSegmentDir(
-            state,
-            state.hydrogenTransportSegmentStart,
-            state.hydrogenTransportSegmentEnd,
-            HYDROGEN_PRODUCTION_COLOR_ACTIVE,
-            CRGB(HYDROGEN_PRODUCTION_COLOR_ACTIVE.r / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.g / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.b / 10),
-            state.hydrogenTransportDelay,
-            state.hydrogenTransportSegment,
-            timers.previousMillisHydrogenTransport,
-            state.firstRunHydrogenTransport,
-            state.hydrogenTransportDirForward
-        );
+        if (state.hydrogenTransportEffectType == 1) {
+            fireEffect(state.leds, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+            EffectUtils::advanceIndexDir(state.hydrogenTransportDelay,
+                                         state.hydrogenTransportSegmentStart,
+                                         state.hydrogenTransportSegmentEnd,
+                                         state.hydrogenTransportDirForward,
+                                         state.hydrogenTransportSegment,
+                                         timers.previousMillisHydrogenTransport,
+                                         state.firstRunHydrogenTransport);
+        } else {
+            state.hydrogenTransportSegment = EffectUtils::runSegmentDir(
+                state,
+                state.hydrogenTransportSegmentStart,
+                state.hydrogenTransportSegmentEnd,
+                HYDROGEN_PRODUCTION_COLOR_ACTIVE,
+                CRGB(HYDROGEN_PRODUCTION_COLOR_ACTIVE.r / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.g / 10, HYDROGEN_PRODUCTION_COLOR_ACTIVE.b / 10),
+                state.hydrogenTransportDelay,
+                state.hydrogenTransportSegment,
+                timers.previousMillisHydrogenTransport,
+                state.firstRunHydrogenTransport,
+                state.hydrogenTransportDirForward
+            );
+        }
 
         if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_MID) {
             if (state.h2ConsumptionEnabled) {
@@ -170,18 +214,29 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
         }
 
         if (!state.pipeEmpty) {
-            state.hydrogenTransportSegment = EffectUtils::runSegmentDir(
-                state,
-                state.hydrogenTransportSegmentStart,
-                state.hydrogenTransportSegmentEnd,
-                HYDROGEN_PRODUCTION_COLOR_ACTIVE,
-                CRGB::Black,
-                state.hydrogenTransportDelay,
-                state.hydrogenTransportSegment,
-                timers.previousMillisHydrogenTransport,
-                state.firstRunHydrogenTransport,
-                state.hydrogenTransportDirForward
-            );
+            if (state.hydrogenTransportEffectType == 1) {
+                fireEffect(state.leds, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
+                EffectUtils::advanceIndexDir(state.hydrogenTransportDelay,
+                                             state.hydrogenTransportSegmentStart,
+                                             state.hydrogenTransportSegmentEnd,
+                                             state.hydrogenTransportDirForward,
+                                             state.hydrogenTransportSegment,
+                                             timers.previousMillisHydrogenTransport,
+                                             state.firstRunHydrogenTransport);
+            } else {
+                state.hydrogenTransportSegment = EffectUtils::runSegmentDir(
+                    state,
+                    state.hydrogenTransportSegmentStart,
+                    state.hydrogenTransportSegmentEnd,
+                    HYDROGEN_PRODUCTION_COLOR_ACTIVE,
+                    CRGB::Black,
+                    state.hydrogenTransportDelay,
+                    state.hydrogenTransportSegment,
+                    timers.previousMillisHydrogenTransport,
+                    state.firstRunHydrogenTransport,
+                    state.hydrogenTransportDirForward
+                );
+            }
         } else {
             EffectUtils::clearRange(state, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
         }
@@ -200,30 +255,52 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
 
 void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
     if (state.hydrogenStorageOn && state.hydrogenStorageEnabled) {
-        state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
-            state,
-            state.hydrogenStorage1SegmentStart,
-            state.hydrogenStorage1SegmentEnd,
-            HYDROGEN_STORAGE_COLOR_ACTIVE,
-            CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
-            state.hydrogenStorage1Delay,
-            state.hydrogenStorageSegment1,
-            timers.previousMillisHydrogenStorage,
-            state.firstRunHydrogenStorage,
-            state.hydrogenStorage1DirForward
-        );
-        state.hydrogenStorageSegment2 = EffectUtils::runSegmentDir(
-            state,
-            state.hydrogenStorage2SegmentStart,
-            state.hydrogenStorage2SegmentEnd,
-            HYDROGEN_STORAGE_COLOR_ACTIVE,
-            CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
-            state.hydrogenStorage2Delay,
-            state.hydrogenStorageSegment2,
-            timers.previousMillisHydrogenStorage2,
-            state.firstRunHydrogenStorage2,
-            state.hydrogenStorage2DirForward
-        );
+        if (state.hydrogenStorage1EffectType == 1) {
+            fireEffect(state.leds, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+            EffectUtils::advanceIndexDir(state.hydrogenStorage1Delay,
+                                         state.hydrogenStorage1SegmentStart,
+                                         state.hydrogenStorage1SegmentEnd,
+                                         state.hydrogenStorage1DirForward,
+                                         state.hydrogenStorageSegment1,
+                                         timers.previousMillisHydrogenStorage,
+                                         state.firstRunHydrogenStorage);
+        } else {
+            state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
+                state,
+                state.hydrogenStorage1SegmentStart,
+                state.hydrogenStorage1SegmentEnd,
+                HYDROGEN_STORAGE_COLOR_ACTIVE,
+                CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
+                state.hydrogenStorage1Delay,
+                state.hydrogenStorageSegment1,
+                timers.previousMillisHydrogenStorage,
+                state.firstRunHydrogenStorage,
+                state.hydrogenStorage1DirForward
+            );
+        }
+        if (state.hydrogenStorage2EffectType == 1) {
+            fireEffect(state.leds, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+            EffectUtils::advanceIndexDir(state.hydrogenStorage2Delay,
+                                         state.hydrogenStorage2SegmentStart,
+                                         state.hydrogenStorage2SegmentEnd,
+                                         state.hydrogenStorage2DirForward,
+                                         state.hydrogenStorageSegment2,
+                                         timers.previousMillisHydrogenStorage2,
+                                         state.firstRunHydrogenStorage2);
+        } else {
+            state.hydrogenStorageSegment2 = EffectUtils::runSegmentDir(
+                state,
+                state.hydrogenStorage2SegmentStart,
+                state.hydrogenStorage2SegmentEnd,
+                HYDROGEN_STORAGE_COLOR_ACTIVE,
+                CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
+                state.hydrogenStorage2Delay,
+                state.hydrogenStorageSegment2,
+                timers.previousMillisHydrogenStorage2,
+                state.firstRunHydrogenStorage2,
+                state.hydrogenStorage2DirForward
+            );
+        }
 
         if (state.hydrogenStorageSegment1 == EffectUtils::terminalBound(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd)) {
             state.hydrogenStorageFull = true;
@@ -240,30 +317,52 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
             state.storageTimerStarted = true;
         }
         if (millis() - timers.hydrogenStorageFullTimer >= HYDROGEN_STORAGE_DELAY_MS) {
-            state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
-                state,
-                state.hydrogenStorage1SegmentStart,
-                state.hydrogenStorage1SegmentEnd,
-                HYDROGEN_STORAGE_COLOR_ACTIVE,
-                CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
-                state.hydrogenStorage1Delay,
-                state.hydrogenStorageSegment1,
-                timers.previousMillisHydrogenStorage,
-                state.firstRunHydrogenStorage,
-                !state.hydrogenStorage1DirForward
-            );
-            state.hydrogenStorageSegment2 = EffectUtils::runSegmentDir(
-                state,
-                state.hydrogenStorage2SegmentStart,
-                state.hydrogenStorage2SegmentEnd,
-                HYDROGEN_STORAGE_COLOR_ACTIVE,
-                CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
-                state.hydrogenStorage2Delay,
-                state.hydrogenStorageSegment2,
-                timers.previousMillisHydrogenStorage2,
-                state.firstRunHydrogenStorage2,
-                !state.hydrogenStorage2DirForward
-            );
+            if (state.hydrogenStorage1EffectType == 1) {
+                fireEffect(state.leds, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
+                EffectUtils::advanceIndexDir(state.hydrogenStorage1Delay,
+                                             state.hydrogenStorage1SegmentStart,
+                                             state.hydrogenStorage1SegmentEnd,
+                                             !state.hydrogenStorage1DirForward,
+                                             state.hydrogenStorageSegment1,
+                                             timers.previousMillisHydrogenStorage,
+                                             state.firstRunHydrogenStorage);
+            } else {
+                state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
+                    state,
+                    state.hydrogenStorage1SegmentStart,
+                    state.hydrogenStorage1SegmentEnd,
+                    HYDROGEN_STORAGE_COLOR_ACTIVE,
+                    CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
+                    state.hydrogenStorage1Delay,
+                    state.hydrogenStorageSegment1,
+                    timers.previousMillisHydrogenStorage,
+                    state.firstRunHydrogenStorage,
+                    !state.hydrogenStorage1DirForward
+                );
+            }
+            if (state.hydrogenStorage2EffectType == 1) {
+                fireEffect(state.leds, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
+                EffectUtils::advanceIndexDir(state.hydrogenStorage2Delay,
+                                             state.hydrogenStorage2SegmentStart,
+                                             state.hydrogenStorage2SegmentEnd,
+                                             !state.hydrogenStorage2DirForward,
+                                             state.hydrogenStorageSegment2,
+                                             timers.previousMillisHydrogenStorage2,
+                                             state.firstRunHydrogenStorage2);
+            } else {
+                state.hydrogenStorageSegment2 = EffectUtils::runSegmentDir(
+                    state,
+                    state.hydrogenStorage2SegmentStart,
+                    state.hydrogenStorage2SegmentEnd,
+                    HYDROGEN_STORAGE_COLOR_ACTIVE,
+                    CRGB(HYDROGEN_STORAGE_COLOR_ACTIVE.r / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.g / 10, HYDROGEN_STORAGE_COLOR_ACTIVE.b / 10),
+                    state.hydrogenStorage2Delay,
+                    state.hydrogenStorageSegment2,
+                    timers.previousMillisHydrogenStorage2,
+                    state.firstRunHydrogenStorage2,
+                    !state.hydrogenStorage2DirForward
+                );
+            }
         }
         if (state.hydrogenStorageSegment1 == EffectUtils::initialIndex(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd) ||
             state.hydrogenStorageSegment2 == EffectUtils::initialIndex(state.hydrogenStorage2DirForward, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd)) {
@@ -285,18 +384,29 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
 
 void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
     if (state.h2ConsumptionOn && state.h2ConsumptionEnabled) {
-        state.h2ConsumptionSegment = EffectUtils::runSegmentDir(
-            state,
-            state.hydrogenConsumptionSegmentStart,
-            state.hydrogenConsumptionSegmentEnd,
-            HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
-            CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
-            state.h2ConsumptionDelay,
-            state.h2ConsumptionSegment,
-            timers.previousMillisH2Consumption,
-            state.firstRunH2Consumption,
-            state.h2ConsumptionDirForward
-        );
+        if (state.h2ConsumptionEffectType == 1) {
+            fireEffect(state.leds, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
+            EffectUtils::advanceIndexDir(state.h2ConsumptionDelay,
+                                         state.hydrogenConsumptionSegmentStart,
+                                         state.hydrogenConsumptionSegmentEnd,
+                                         state.h2ConsumptionDirForward,
+                                         state.h2ConsumptionSegment,
+                                         timers.previousMillisH2Consumption,
+                                         state.firstRunH2Consumption);
+        } else {
+            state.h2ConsumptionSegment = EffectUtils::runSegmentDir(
+                state,
+                state.hydrogenConsumptionSegmentStart,
+                state.hydrogenConsumptionSegmentEnd,
+                HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
+                CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
+                state.h2ConsumptionDelay,
+                state.h2ConsumptionSegment,
+                timers.previousMillisH2Consumption,
+                state.firstRunH2Consumption,
+                state.h2ConsumptionDirForward
+            );
+        }
 
         if (state.h2ConsumptionSegment == EffectUtils::terminalBound(state.h2ConsumptionDirForward, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd)) {
             if (state.fabricationEnabled) {
@@ -329,36 +439,58 @@ void updateFabricationEffect(SystemState &state, Timers &timers) {
 // ---- Storage transport / powerstation
 void updateStorageTransportEffect(SystemState &state, Timers &timers) {
     if (state.storageTransportOn && state.storageTransportEnabled) {
-        state.storageTransportSegment = EffectUtils::runSegmentDir(
-            state,
-            state.storageTransportSegmentStart,
-            state.storageTransportSegmentEnd,
-            HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
-            CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
-            state.storageTransportDelay,
-            state.storageTransportSegment,
-            timers.previousMillisStorageTransport,
-            state.firstRunStorageTransport,
-            state.storageTransportDirForward
-        );
+        if (state.storageTransportEffectType == 1) {
+            fireEffect(state.leds, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
+            EffectUtils::advanceIndexDir(state.storageTransportDelay,
+                                         state.storageTransportSegmentStart,
+                                         state.storageTransportSegmentEnd,
+                                         state.storageTransportDirForward,
+                                         state.storageTransportSegment,
+                                         timers.previousMillisStorageTransport,
+                                         state.firstRunStorageTransport);
+        } else {
+            state.storageTransportSegment = EffectUtils::runSegmentDir(
+                state,
+                state.storageTransportSegmentStart,
+                state.storageTransportSegmentEnd,
+                HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
+                CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
+                state.storageTransportDelay,
+                state.storageTransportSegment,
+                timers.previousMillisStorageTransport,
+                state.firstRunStorageTransport,
+                state.storageTransportDirForward
+            );
+        }
         if (state.storageTransportSegment == EffectUtils::terminalBound(state.storageTransportDirForward, state.storageTransportSegmentStart, state.storageTransportSegmentEnd)) {
             if (state.storagePowerstationEnabled) {
                 state.storagePowerstationOn = true;
             }
         }
         if (state.storagePowerstationOn && state.storagePowerstationEnabled) {
-            state.storagePowerstationSegment = EffectUtils::runSegmentDir(
-                state,
-                state.storagePowerstationSegmentStart,
-                state.storagePowerstationSegmentEnd,
-                HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
-                CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
-                state.storagePowerstationDelay,
-                state.storagePowerstationSegment,
-                timers.previousMillisStoragePowerstation,
-                state.firstRunStoragePowerstation,
-                state.storagePowerstationDirForward
-            );
+            if (state.storagePowerstationEffectType == 1) {
+                fireEffect(state.leds, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
+                EffectUtils::advanceIndexDir(state.storagePowerstationDelay,
+                                             state.storagePowerstationSegmentStart,
+                                             state.storagePowerstationSegmentEnd,
+                                             state.storagePowerstationDirForward,
+                                             state.storagePowerstationSegment,
+                                             timers.previousMillisStoragePowerstation,
+                                             state.firstRunStoragePowerstation);
+            } else {
+                state.storagePowerstationSegment = EffectUtils::runSegmentDir(
+                    state,
+                    state.storagePowerstationSegmentStart,
+                    state.storagePowerstationSegmentEnd,
+                    HYDROGEN_CONSUMPTION_COLOR_ACTIVE,
+                    CRGB(HYDROGEN_CONSUMPTION_COLOR_ACTIVE.r / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.g / 10, HYDROGEN_CONSUMPTION_COLOR_ACTIVE.b / 10),
+                    state.storagePowerstationDelay,
+                    state.storagePowerstationSegment,
+                    timers.previousMillisStoragePowerstation,
+                    state.firstRunStoragePowerstation,
+                    state.storagePowerstationDirForward
+                );
+            }
         }
         if (state.storagePowerstationSegment == EffectUtils::terminalBound(state.storagePowerstationDirForward, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd)) {
             if (state.electricityTransportEnabled) {
@@ -380,18 +512,29 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
 // ---- Electricity transport
 void updateElectricityEffect(SystemState &state, Timers &timers) {
     if (state.electricityTransportOn && state.electricityTransportEnabled) {
-        state.electricityTransportSegment = EffectUtils::runSegmentDir(
-            state,
-            state.electricityTransportSegmentStart,
-            state.electricityTransportSegmentEnd,
-            ELECTRICITY_TRANSPORT_COLOR_ACTIVE,
-            CRGB(ELECTRICITY_TRANSPORT_COLOR_ACTIVE.r / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.g / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.b / 10),
-            state.electricityTransportDelay,
-            state.electricityTransportSegment,
-            timers.previousMillisElectricityTransport,
-            state.firstRunElectricityTransport,
-            state.electricityTransportDirForward
-        );
+        if (state.electricityTransportEffectType == 1) {
+            fireEffect(state.leds, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
+            EffectUtils::advanceIndexDir(state.electricityTransportDelay,
+                                         state.electricityTransportSegmentStart,
+                                         state.electricityTransportSegmentEnd,
+                                         state.electricityTransportDirForward,
+                                         state.electricityTransportSegment,
+                                         timers.previousMillisElectricityTransport,
+                                         state.firstRunElectricityTransport);
+        } else {
+            state.electricityTransportSegment = EffectUtils::runSegmentDir(
+                state,
+                state.electricityTransportSegmentStart,
+                state.electricityTransportSegmentEnd,
+                ELECTRICITY_TRANSPORT_COLOR_ACTIVE,
+                CRGB(ELECTRICITY_TRANSPORT_COLOR_ACTIVE.r / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.g / 10, ELECTRICITY_TRANSPORT_COLOR_ACTIVE.b / 10),
+                state.electricityTransportDelay,
+                state.electricityTransportSegment,
+                timers.previousMillisElectricityTransport,
+                state.firstRunElectricityTransport,
+                state.electricityTransportDirForward
+            );
+        }
 
         if (state.electricityTransportSegment == EffectUtils::terminalBound(state.electricityTransportDirForward, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd)) {
             digitalWrite(STREET_LED_PIN, HIGH);
