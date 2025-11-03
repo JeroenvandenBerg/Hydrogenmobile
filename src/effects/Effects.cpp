@@ -12,7 +12,10 @@
 
 // ---- Wind effect
 void updateWindEffect(SystemState &state, Timers &timers) {
-    if (state.windOn) {
+    // Check if wind segment trigger is active
+    bool windTriggerActive = EffectUtils::isTriggerActive(state, state.windTrigger);
+    
+    if (windTriggerActive) {
         // Wind segment
         if (state.windEnabled) {
             if (state.windEffectType == 1) {
@@ -48,8 +51,9 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
         }
 
-        // Solar segment
-        if (state.solarEnabled) {
+        // Solar segment  
+        bool solarTriggerActive = EffectUtils::isTriggerActive(state, state.solarTrigger);
+        if (solarTriggerActive && state.solarEnabled) {
             if (state.solarEffectType == 1) {
                 fireEffect(state.leds, state.solarSegmentStart, state.solarSegmentEnd);
                 EffectUtils::advanceIndexDir(state.solarDelay,
@@ -104,7 +108,9 @@ void updateWindEffect(SystemState &state, Timers &timers) {
 
 // ---- Electricity production effect
 void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
-    if (state.electricityProductionOn && state.electricityProductionEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.electricityProductionTrigger);
+    
+    if (triggerActive && state.electricityProductionEnabled) {
         if (state.electricityProductionEffectType == 1) {
             fireEffect(state.leds, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
             EffectUtils::advanceIndexDir(state.electricityProductionDelay,
@@ -149,7 +155,8 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
 
 // ---- Electrolyser
 void updateElectrolyserEffect(SystemState &state, Timers &timers) {
-    if (state.electrolyserOn && state.electrolyserEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.electrolyserTrigger);
+    if (triggerActive && state.electrolyserEnabled) {
         if (millis() - timers.previousMillisElectrolyser >= HYDROGEN_PRODUCTION_DELAY_MS) {
             if (state.hydrogenProductionEnabled) {
                 state.hydrogenProductionOn = true;
@@ -162,7 +169,9 @@ void updateElectrolyserEffect(SystemState &state, Timers &timers) {
 
 // ---- Hydrogen production/transport/storage/consumption (moved here)
 void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenProductionOn && state.hydrogenProductionEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.hydrogenProductionTrigger);
+    
+    if (triggerActive && state.hydrogenProductionEnabled) {
         // 0=Running, 1=Fire, 2=Fade
         if (state.hydrogenProductionEffectType == 1) {
             // Fire effect
@@ -199,7 +208,9 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
 }
 
 void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenTransportOn && state.hydrogenTransportEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.hydrogenTransportTrigger);
+    
+    if (triggerActive && state.hydrogenTransportEnabled) {
         if (state.hydrogenTransportEffectType == 1) {
             fireEffect(state.leds, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
             EffectUtils::advanceIndexDir(state.hydrogenTransportDelay,
@@ -296,8 +307,11 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
 }
 
 void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
-    if (state.hydrogenStorageOn && state.hydrogenStorageEnabled) {
-        if (state.hydrogenStorage1EffectType == 1) {
+    bool trigger1Active = EffectUtils::isTriggerActive(state, state.hydrogenStorage1Trigger);
+    bool trigger2Active = EffectUtils::isTriggerActive(state, state.hydrogenStorage2Trigger);
+    
+    if ((trigger1Active || trigger2Active) && state.hydrogenStorageEnabled) {
+        if (trigger1Active && state.hydrogenStorage1EffectType == 1) {
             fireEffect(state.leds, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
             EffectUtils::advanceIndexDir(state.hydrogenStorage1Delay,
                                          state.hydrogenStorage1SegmentStart,
@@ -324,7 +338,7 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
                 state.hydrogenStorage1DirForward
             );
         }
-        if (state.hydrogenStorage2EffectType == 1) {
+        if (trigger2Active && state.hydrogenStorage2EffectType == 1) {
             fireEffect(state.leds, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
             EffectUtils::advanceIndexDir(state.hydrogenStorage2Delay,
                                          state.hydrogenStorage2SegmentStart,
@@ -441,7 +455,8 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
 }
 
 void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
-    if (state.h2ConsumptionOn && state.h2ConsumptionEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.h2ConsumptionTrigger);
+    if (triggerActive && state.h2ConsumptionEnabled) {
         if (state.h2ConsumptionEffectType == 1) {
             fireEffect(state.leds, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
             EffectUtils::advanceIndexDir(state.h2ConsumptionDelay,
@@ -475,8 +490,10 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
                 state.fabricationOn = true;
             }
         }
-    } else if (state.storageTransportOn && state.storageTransportEnabled) {
-        if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
+    } else {
+        bool storageTransportTriggerActive = EffectUtils::isTriggerActive(state, state.storageTransportTrigger);
+        if (storageTransportTriggerActive && state.storageTransportEnabled) {
+            if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
             if (state.fabricationEnabled) {
                 state.fabricationOn = true;
             }
@@ -487,11 +504,13 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
         state.h2ConsumptionSegment = EffectUtils::initialIndex(state.h2ConsumptionDirForward, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
         state.fabricationOn = false;
     }
+    }
 }
 
 // ---- Fabrication effect
 void updateFabricationEffect(SystemState &state, Timers &timers) {
-    if (state.fabricationOn && state.fabricationEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.fabricationTrigger);
+    if (triggerActive && state.fabricationEnabled) {
         // 0=Running, 1=Fire, 2=Fade
         if (state.fabricationEffectType == 1) {
             // Fire
@@ -525,7 +544,8 @@ void updateFabricationEffect(SystemState &state, Timers &timers) {
 
 // ---- Storage transport / powerstation
 void updateStorageTransportEffect(SystemState &state, Timers &timers) {
-    if (state.storageTransportOn && state.storageTransportEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.storageTransportTrigger);
+    if (triggerActive && state.storageTransportEnabled) {
         if (state.storageTransportEffectType == 1) {
             fireEffect(state.leds, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
             EffectUtils::advanceIndexDir(state.storageTransportDelay,
@@ -558,7 +578,8 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
                 state.storagePowerstationOn = true;
             }
         }
-        if (state.storagePowerstationOn && state.storagePowerstationEnabled) {
+        bool storagePowerstationTriggerActive = EffectUtils::isTriggerActive(state, state.storagePowerstationTrigger);
+        if (storagePowerstationTriggerActive && state.storagePowerstationEnabled) {
             if (state.storagePowerstationEffectType == 1) {
                 fireEffect(state.leds, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
                 EffectUtils::advanceIndexDir(state.storagePowerstationDelay,
@@ -605,7 +626,8 @@ void updateStorageTransportEffect(SystemState &state, Timers &timers) {
 
 // ---- Electricity transport
 void updateElectricityEffect(SystemState &state, Timers &timers) {
-    if (state.electricityTransportOn && state.electricityTransportEnabled) {
+    bool triggerActive = EffectUtils::isTriggerActive(state, state.electricityTransportTrigger);
+    if (triggerActive && state.electricityTransportEnabled) {
         if (state.electricityTransportEffectType == 1) {
             fireEffect(state.leds, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
             EffectUtils::advanceIndexDir(state.electricityTransportDelay,
@@ -647,13 +669,54 @@ void updateElectricityEffect(SystemState &state, Timers &timers) {
     }
 }
 
-// ---- Information LEDs
+// ---- Custom segments (generic runner)
+void updateCustomSegments(SystemState &state, Timers &timers) {
+    for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
+        auto &cs = state.custom[i];
+        if (!cs.inUse) continue;
+
+        bool trig = EffectUtils::isTriggerActive(state, cs.trigger);
+        if (trig && cs.enabled) {
+            if (cs.effectType == 1) {
+                fireEffect(state.leds, cs.start, cs.end);
+                EffectUtils::advanceIndexDir(cs.delay,
+                                             cs.start, cs.end,
+                                             cs.dirForward,
+                                             cs.segmentIndex,
+                                             cs.prevMillis,
+                                             cs.firstRun);
+            } else if (cs.effectType == 2) {
+                if (state.fadeEffect) {
+                    state.fadeEffect->update(state.leds, cs.start, cs.end, cs.color, cs.firstRun, cs.delay);
+                }
+            } else {
+                cs.segmentIndex = EffectUtils::runSegmentDir(
+                    state,
+                    cs.start, cs.end,
+                    cs.color,
+                    CRGB(cs.color.r / 10, cs.color.g / 10, cs.color.b / 10),
+                    cs.delay,
+                    cs.segmentIndex,
+                    cs.prevMillis,
+                    cs.firstRun,
+                    cs.dirForward
+                );
+            }
+        } else {
+            EffectUtils::clearRange(state, cs.start, cs.end);
+            cs.firstRun = true;
+            cs.segmentIndex = EffectUtils::initialIndex(cs.dirForward, cs.start, cs.end);
+        }
+    }
+}
+
+// ---- Information LEDs (now on separate digital pins)
 void updateInformationLEDs(SystemState &state, Timers &timers) {
-    setPixelSafe(state, WIND_INFO_LED, state.windOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, HYDROGEN_PRODUCTION_INFO_LED, state.hydrogenProductionOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, ELECTROLYSER_INFO_LED, state.electrolyserOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, HYDROGEN_STORAGE_INFO_LED, state.hydrogenStorageOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, HYDROGEN_CONSUMPTION_INFO_LED, state.h2ConsumptionOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, ELECTRICITY_TRANSPORT_INFO_LED, state.electricityTransportOn ? CRGB::Red : CRGB::Black);
-    setPixelSafe(state, STREET_LED, state.streetLightOn ? CRGB::Red : CRGB::Black);
+    digitalWrite(WIND_INFO_LED_PIN, state.windOn ? HIGH : LOW);
+    digitalWrite(HYDROGEN_PRODUCTION_INFO_LED_PIN, state.hydrogenProductionOn ? HIGH : LOW);
+    digitalWrite(ELECTROLYSER_INFO_LED_PIN, state.electrolyserOn ? HIGH : LOW);
+    digitalWrite(HYDROGEN_STORAGE_INFO_LED_PIN, state.hydrogenStorageOn ? HIGH : LOW);
+    digitalWrite(HYDROGEN_CONSUMPTION_INFO_LED_PIN, state.h2ConsumptionOn ? HIGH : LOW);
+    digitalWrite(ELECTRICITY_TRANSPORT_INFO_LED_PIN, state.electricityTransportOn ? HIGH : LOW);
+    digitalWrite(STREET_INFO_LED_PIN, state.streetLightOn ? HIGH : LOW);
 }

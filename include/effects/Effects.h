@@ -15,5 +15,6 @@ void updateFabricationEffect(SystemState &state, Timers &timers);
 void updateStorageTransportEffect(SystemState &state, Timers &timers);
 void updateElectricityEffect(SystemState &state, Timers &timers);
 void updateInformationLEDs(SystemState &state, Timers &timers);
+void updateCustomSegments(SystemState &state, Timers &timers);
 
 #endif

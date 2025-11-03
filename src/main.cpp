@@ -69,6 +69,7 @@ void updateSegments() {
     updateFabricationEffect(state, timers);
     updateElectricityEffect(state, timers);
     updateStorageTransportEffect(state, timers);
+    updateCustomSegments(state, timers);
     // Update the small information LEDs (status indicators)
     updateInformationLEDs(state, timers);
 }

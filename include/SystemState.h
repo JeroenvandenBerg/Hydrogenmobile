@@ -8,6 +8,22 @@
 #include <FastLED.h>
 #include "Config.h"
 
+// Trigger types for segment activation
+enum class TriggerType : uint8_t {
+    ALWAYS_ON = 0,           // Segment always active (when enabled)
+    WIND = 1,                // Activated by windOn state
+    ELECTRICITY_PROD = 2,    // Activated by electricityProductionOn
+    ELECTROLYSER = 3,        // Activated by electrolyserOn
+    HYDROGEN_PROD = 4,       // Activated by hydrogenProductionOn
+    HYDROGEN_TRANSPORT = 5,  // Activated by hydrogenTransportOn
+    HYDROGEN_STORAGE = 6,    // Activated by hydrogenStorageOn
+    H2_CONSUMPTION = 7,      // Activated by h2ConsumptionOn
+    FABRICATION = 8,         // Activated by fabricationOn
+    ELECTRICITY_TRANSPORT = 9, // Activated by electricityTransportOn
+    STORAGE_TRANSPORT = 10,  // Activated by storageTransportOn
+    STORAGE_POWERSTATION = 11 // Activated by storagePowerstationOn
+};
+
 struct Timers {
     uint32_t previousButtonCheckMillis = 0;
     uint32_t buttonDisableStartTime = 0;
@@ -166,6 +182,21 @@ struct SystemState {
     int hydrogenProductionEffectType = 0;
     int fabricationEffectType = 0;
 
+    // Activation triggers - configure which state activates each segment
+    TriggerType windTrigger = TriggerType::WIND;
+    TriggerType solarTrigger = TriggerType::WIND;
+    TriggerType electricityProductionTrigger = TriggerType::ELECTRICITY_PROD;
+    TriggerType electrolyserTrigger = TriggerType::ELECTROLYSER;
+    TriggerType hydrogenProductionTrigger = TriggerType::HYDROGEN_PROD;
+    TriggerType hydrogenTransportTrigger = TriggerType::HYDROGEN_TRANSPORT;
+    TriggerType hydrogenStorage1Trigger = TriggerType::HYDROGEN_STORAGE;
+    TriggerType hydrogenStorage2Trigger = TriggerType::HYDROGEN_STORAGE;
+    TriggerType h2ConsumptionTrigger = TriggerType::H2_CONSUMPTION;
+    TriggerType fabricationTrigger = TriggerType::FABRICATION;
+    TriggerType electricityTransportTrigger = TriggerType::ELECTRICITY_TRANSPORT;
+    TriggerType storageTransportTrigger = TriggerType::STORAGE_TRANSPORT;
+    TriggerType storagePowerstationTrigger = TriggerType::STORAGE_POWERSTATION;
+
     // First-run flags
     bool firstRunWind = true;
     bool firstRunSolar = true;
@@ -198,5 +229,39 @@ struct SystemState {
     CRGB electricityTransportColor = ELECTRICITY_TRANSPORT_COLOR_ACTIVE;
     CRGB storageTransportColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
     CRGB storagePowerstationColor = HYDROGEN_CONSUMPTION_COLOR_ACTIVE;
+
+    // Editable segment names (persisted via Web UI)
+    String windName = "Wind";
+    String solarName = "Solar";
+    String electricityProductionName = "Electricity Production";
+    String hydrogenProductionName = "Hydrogen Production";
+    String hydrogenTransportName = "Hydrogen Transport";
+    String hydrogenStorage1Name = "Hydrogen Storage 1";
+    String hydrogenStorage2Name = "Hydrogen Storage 2";
+    String h2ConsumptionName = "Hydrogen Consumption";
+    String fabricationName = "Fabrication";
+    String electricityTransportName = "Electricity Transport";
+    String storageTransportName = "Storage Transport";
+    String storagePowerstationName = "Storage Powerstation";
+
+    // ---------------- Custom segments ----------------
+    static constexpr int MAX_CUSTOM_SEGMENTS = 3;
+    struct CustomSegment {
+        bool inUse = false;
+        String name = "Custom";
+        int start = 0;
+        int end = 0;
+        bool dirForward = true;
+        bool enabled = true;
+        int delay = LED_DELAY;
+        int effectType = 0; // 0=Running, 1=Fire, 2=Fade
+        CRGB color = CRGB::White;
+        TriggerType trigger = TriggerType::ALWAYS_ON;
+        // runtime fields
+        int segmentIndex = 0;
+        bool firstRun = true;
+        uint32_t prevMillis = 0; // for timing per custom segment
+    };
+    CustomSegment custom[MAX_CUSTOM_SEGMENTS];
 };
 // End of SystemState.h

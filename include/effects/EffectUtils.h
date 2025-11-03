@@ -104,4 +104,36 @@ inline void advanceIndexDir(uint16_t delayMs,
     }
 }
 
+// Check if a segment should be active based on its trigger
+inline bool isTriggerActive(const SystemState &state, TriggerType trigger) {
+    switch (trigger) {
+        case TriggerType::ALWAYS_ON:
+            return true;
+        case TriggerType::WIND:
+            return state.windOn;
+        case TriggerType::ELECTRICITY_PROD:
+            return state.electricityProductionOn;
+        case TriggerType::ELECTROLYSER:
+            return state.electrolyserOn;
+        case TriggerType::HYDROGEN_PROD:
+            return state.hydrogenProductionOn;
+        case TriggerType::HYDROGEN_TRANSPORT:
+            return state.hydrogenTransportOn;
+        case TriggerType::HYDROGEN_STORAGE:
+            return state.hydrogenStorageOn;
+        case TriggerType::H2_CONSUMPTION:
+            return state.h2ConsumptionOn;
+        case TriggerType::FABRICATION:
+            return state.fabricationOn;
+        case TriggerType::ELECTRICITY_TRANSPORT:
+            return state.electricityTransportOn;
+        case TriggerType::STORAGE_TRANSPORT:
+            return state.storageTransportOn;
+        case TriggerType::STORAGE_POWERSTATION:
+            return state.storagePowerstationOn;
+        default:
+            return false;
+    }
+}
+
 } // namespace EffectUtils
