@@ -186,7 +186,7 @@ struct SystemState {
     TriggerType windTrigger = TriggerType::WIND;
     TriggerType solarTrigger = TriggerType::WIND;
     TriggerType electricityProductionTrigger = TriggerType::ELECTRICITY_PROD;
-    TriggerType electrolyserTrigger = TriggerType::ELECTROLYSER;
+    TriggerType electrolyserTrigger = TriggerType::ELECTROLYSER;  // Set to true when electricity production reaches terminal
     TriggerType hydrogenProductionTrigger = TriggerType::HYDROGEN_PROD;
     TriggerType hydrogenTransportTrigger = TriggerType::HYDROGEN_TRANSPORT;
     TriggerType hydrogenStorage1Trigger = TriggerType::HYDROGEN_STORAGE;

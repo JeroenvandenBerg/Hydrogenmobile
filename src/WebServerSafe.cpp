@@ -285,6 +285,7 @@ void initWebServerSafe() {
             "<div style='margin:10px 0;'>"
             "<a href='/'><button type='button'>Segments</button></a>"
             "<a href='/triggers'><button type='button'>Triggers</button></a>"
+            "<a href='/status'><button type='button'>Status</button></a>"
             "</div>";
         
         if (state.testMode) {
@@ -384,9 +385,16 @@ void initWebServerSafe() {
         // Custom segments section
         page += "<h3>Custom Segments</h3>";
         // Add button if capacity available
-        bool hasFree = false; for (int i=0;i<SystemState::MAX_CUSTOM_SEGMENTS;++i){ if(!state.custom[i].inUse){ hasFree=true; break; }}
+        bool hasFree = false; 
+        for (int i=0;i<SystemState::MAX_CUSTOM_SEGMENTS;++i){ 
+            if(!state.custom[i].inUse){ 
+                hasFree=true; 
+                break;
+            }
+        }
+        
         if (hasFree) {
-            page += "<form method='POST' action='/add_custom' style='margin-bottom:10px;display:inline-block;'><button type='submit'>Add Custom Segment</button></form>";
+            page += "<button type='button' onclick=\"addCustomSegment()\">Add Custom Segment</button>";
         }
         
         for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
@@ -414,7 +422,7 @@ void initWebServerSafe() {
             page += " <span id='ctrl_cust" + idx + "_color' style='display:" + String((cs.effectType==0||cs.effectType==2)?"inline":"none") + ";'> Color: <input type='color' name='cust" + idx + "_color' value='" + colorToHexLocal(cs.color) + "'></span>";
             page += " <span>Enabled: <input type='checkbox' name='cust" + idx + "_en' value='1" + String(cs.enabled?"' checked":"'") + "></span>";
             page += "<button type='button' class='test' onclick=\"testSegment('cust" + idx + "_s','cust" + idx + "_e','cust" + idx + "_dir','cust" + idx + "_eff','cust" + idx + "_delay','cust" + idx + "_color')\">Test</button>";
-            page += "<form method='POST' action='/remove_custom' style='display:inline;margin-left:8px;'><input type='hidden' name='id' value='" + idx + "'><button type='submit' class='stop'>Remove</button></form>";
+            page += "<button type='button' class='stop' style='margin-left:8px;' onclick=\"removeCustomSegment(" + idx + ")\">Remove</button>";
             page += "</div></div>";
         }
 
@@ -425,6 +433,17 @@ void initWebServerSafe() {
         
         page += "<button type='submit'>Save All Settings</button></form><hr>"
             "<script>\n"
+            "function addCustomSegment(){\n"
+            "  fetch('/add_custom',{method:'POST'})\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(()=>alert('Failed to add custom segment'));\n"
+            "}\n"
+            "function removeCustomSegment(id){\n"
+            "  const body=new URLSearchParams({id:id}).toString();\n"
+            "  fetch('/remove_custom',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(()=>alert('Failed to remove custom segment'));\n"
+            "}\n"
             "function toggleDirDelay(sel,dirName,delayName,colorName){\n"
             "  const v = sel.value;\n"
             "  const dirCtrl = document.getElementById('ctrl_'+dirName);\n"
@@ -481,6 +500,7 @@ void initWebServerSafe() {
                 "<div style='margin:10px 0;'>"
                 "<a href='/'><button type='button'>Segments</button></a>"
                 "<a href='/triggers'><button type='button'>Triggers</button></a>"
+                "<a href='/status'><button type='button'>Status</button></a>"
                 "</div>"
                 "<p>Configure which system state activates each LED segment:</p>"
                 "<form id='triggerForm' method=\"POST\" action=\"/update_triggers\">";
@@ -602,8 +622,63 @@ void initWebServerSafe() {
             request->redirect("/triggers");
         });
 
+        // Status page - shows current trigger states
+        server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+            String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Trigger Status</title>"
+                "<style>body{font-family:Arial,sans-serif;max-width:600px;margin:20px auto;padding:10px;}"
+                ".logo{text-align:center;margin:20px 0;}"
+                ".logo img{max-width:200px;height:auto;}"
+                "h3{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:5px;}"
+                ".trigger{background:#f9f9f9;padding:10px;margin:10px 0;border-radius:5px;display:flex;justify-content:space-between;align-items:center;}"
+                ".status{padding:5px 15px;border-radius:4px;font-weight:bold;}"
+                ".status.on{background:#4CAF50;color:white;}"
+                ".status.off{background:#ccc;color:#666;}"
+                "button{background:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px;}"
+                "button:hover{background:#45a049;}"
+                "</style>"
+                "<script>"
+                "function refresh(){"
+                "  window.location.reload();"
+                "}"
+                "setInterval(refresh, 2000);" // Auto-refresh every 2 seconds
+                "</script>"
+                "</head><body>"
+                "<div class='logo'><img src='" + String(LOGO_DATA_URI) + "' alt='OakZo Logo'></div>"
+                "<h3>Trigger Status Monitor</h3>"
+                "<div style='margin:10px 0;'>"
+                "<a href='/'><button type='button'>Segments</button></a>"
+                "<a href='/triggers'><button type='button'>Triggers</button></a>"
+                "<a href='/status'><button type='button'>Status</button></a>"
+                "</div>"
+                "<p>Live status of all trigger conditions (auto-refreshes every 2 seconds):</p>";
+        
+            // Helper to show trigger status using EffectUtils::isTriggerActive
+            auto showTriggerStatus = [&](const char* label, TriggerType trigger) {
+                bool isActive = EffectUtils::isTriggerActive(state, trigger);
+                page += "<div class='trigger'><span>" + String(label) + "</span>";
+                page += "<span class='status " + String(isActive ? "on" : "off") + "'>" + String(isActive ? "ACTIVE" : "INACTIVE") + "</span></div>";
+            };
+        
+            showTriggerStatus("Wind Trigger", TriggerType::WIND);
+            showTriggerStatus("Solar Trigger (uses Wind)", TriggerType::WIND);  // Solar uses Wind trigger by default
+            showTriggerStatus("Electricity Production", TriggerType::ELECTRICITY_PROD);
+            showTriggerStatus("Electrolyser", TriggerType::ELECTROLYSER);
+            showTriggerStatus("Hydrogen Production", TriggerType::HYDROGEN_PROD);
+            showTriggerStatus("Hydrogen Transport", TriggerType::HYDROGEN_TRANSPORT);
+            showTriggerStatus("Hydrogen Storage", TriggerType::HYDROGEN_STORAGE);
+            showTriggerStatus("H2 Consumption", TriggerType::H2_CONSUMPTION);
+            showTriggerStatus("Fabrication", TriggerType::FABRICATION);
+            showTriggerStatus("Electricity Transport", TriggerType::ELECTRICITY_TRANSPORT);
+            showTriggerStatus("Storage Transport", TriggerType::STORAGE_TRANSPORT);
+            showTriggerStatus("Storage Powerstation", TriggerType::STORAGE_POWERSTATION);
+        
+            page += "</body></html>";
+            request->send(200, "text/html", page);
+        });
+
         // Add a custom segment slot
         server.on("/add_custom", HTTP_POST, [](AsyncWebServerRequest *request){
+            bool added = false;
             for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
                 if (!state.custom[i].inUse) {
                     state.custom[i].inUse = true;
@@ -616,6 +691,10 @@ void initWebServerSafe() {
                     state.custom[i].effectType = 0;
                     state.custom[i].color = CRGB::White;
                     state.custom[i].trigger = TriggerType::ALWAYS_ON;
+                    // Initialize runtime fields
+                    state.custom[i].firstRun = true;
+                    state.custom[i].segmentIndex = 0;
+                    state.custom[i].prevMillis = 0;
                     String p = String("cust") + String(i) + "_";
                     prefs.putBool((p+"inuse").c_str(), true);
                     prefs.putString((p+"name").c_str(), state.custom[i].name);
@@ -627,10 +706,15 @@ void initWebServerSafe() {
                     prefs.putInt((p+"eff").c_str(), state.custom[i].effectType);
                     prefs.putUInt((p+"color").c_str(), 0xFFFFFF);
                     prefs.putUChar((p+"trig").c_str(), static_cast<uint8_t>(state.custom[i].trigger));
+                    added = true;
                     break;
                 }
             }
-            request->redirect("/");
+            if (added) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(400, "text/plain", "No free slots");
+            }
         });
 
         // Remove a custom segment slot
@@ -851,7 +935,9 @@ void initWebServerSafe() {
             String dlyKey = "cust" + idx + "_delay";
             String effKey = "cust" + idx + "_eff";
             String colKey = "cust" + idx + "_color";
-            if (!(hasParam(nameKey) && hasParam(sKey) && hasParam(eKey) && hasParam(dirKey) && hasParam(dlyKey) && hasParam(effKey) && hasParam(colKey))) continue;
+            // Note: enKey (checkbox) is NOT required - unchecked checkboxes don't send params
+            bool hasAll = hasParam(nameKey) && hasParam(sKey) && hasParam(eKey) && hasParam(dirKey) && hasParam(dlyKey) && hasParam(effKey) && hasParam(colKey);
+            if (!hasAll) continue;
             TmpCustom t;
             t.present = true;
             t.name = request->getParam(nameKey.c_str(), true)->value(); t.name.trim(); if (t.name.length()>32) t.name = t.name.substring(0,32);
@@ -1044,44 +1130,30 @@ void initWebServerSafe() {
     state.storageTransportColor = unpackColorLocal(stcol);
     state.storagePowerstationColor = unpackColorLocal(spcol);
 
-        // Handle custom segments in the same save
+        // Handle custom segments - use the tmpCustoms data already parsed for overlap validation
         for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
-            if (!state.custom[i].inUse) continue;
-            String idx = String(i);
-            auto hasParam = [&](const String &k){ return request->hasParam(k.c_str(), true); };
-            // All must exist for a shown custom item
-            String nameKey = "cust" + idx + "_name";
-            String sKey = "cust" + idx + "_s";
-            String eKey = "cust" + idx + "_e";
-            String dirKey = "cust" + idx + "_dir";
-            String enKey = "cust" + idx + "_en";
-            String dlyKey = "cust" + idx + "_delay";
-            String effKey = "cust" + idx + "_eff";
-            String colKey = "cust" + idx + "_color";
-            if (!(hasParam(nameKey) && hasParam(sKey) && hasParam(eKey) && hasParam(dirKey) && hasParam(dlyKey) && hasParam(effKey) && hasParam(colKey))) continue;
-            // Read values
-            String nm = request->getParam(nameKey.c_str(), true)->value(); nm.trim(); if (nm.length()>32) nm = nm.substring(0,32);
-            int s = request->getParam(sKey.c_str(), true)->value().toInt();
-            int e = request->getParam(eKey.c_str(), true)->value().toInt();
-            if (s < 0) s = 0; if (e >= NUM_LEDS) e = NUM_LEDS-1; if (s>e) e=s;
-            bool dir = request->getParam(dirKey.c_str(), true)->value() == "1";
-            bool en = request->hasParam(enKey.c_str(), true);
-            int dly = request->getParam(dlyKey.c_str(), true)->value().toInt(); if (dly<1) dly=1; if (dly>10000) dly=10000;
-            int eff = request->getParam(effKey.c_str(), true)->value().toInt(); if (eff<0||eff>2) eff=0;
-            uint32_t col; parseHexColor(colKey.c_str(), col);
+            if (!tmpCustoms[i].present) continue;  // Use tmpCustoms instead of checking state.custom[i].inUse
+            auto &t = tmpCustoms[i];
             // Save prefs
-            String p = String("cust") + idx + "_";
-            prefs.putString((p+"name").c_str(), nm);
-            prefs.putInt((p+"s").c_str(), s);
-            prefs.putInt((p+"e").c_str(), e);
-            prefs.putBool((p+"dir").c_str(), dir);
-            prefs.putBool((p+"en").c_str(), en);
-            prefs.putInt((p+"delay").c_str(), dly);
-            prefs.putInt((p+"eff").c_str(), eff);
-            prefs.putUInt((p+"color").c_str(), col);
+            String p = String("cust") + String(i) + "_";
+            prefs.putString((p+"name").c_str(), t.name);
+            prefs.putInt((p+"s").c_str(), t.s);
+            prefs.putInt((p+"e").c_str(), t.e);
+            prefs.putBool((p+"dir").c_str(), t.dir);
+            prefs.putBool((p+"en").c_str(), t.en);
+            prefs.putInt((p+"delay").c_str(), t.dly);
+            prefs.putInt((p+"eff").c_str(), t.eff);
+            prefs.putUInt((p+"color").c_str(), t.col);
             // Update runtime
             auto &cs = state.custom[i];
-            cs.name = nm; cs.start = s; cs.end = e; cs.dirForward = dir; cs.enabled = en; cs.delay = dly; cs.effectType = eff; cs.color = CRGB((col>>16)&0xFF,(col>>8)&0xFF,col&0xFF);
+            cs.name = t.name; 
+            cs.start = t.s; 
+            cs.end = t.e; 
+            cs.dirForward = t.dir; 
+            cs.enabled = t.en; 
+            cs.delay = t.dly; 
+            cs.effectType = t.eff; 
+            cs.color = CRGB((t.col>>16)&0xFF,(t.col>>8)&0xFF,t.col&0xFF);
         }
 
         request->redirect("/");
