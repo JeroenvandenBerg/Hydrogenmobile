@@ -18,6 +18,7 @@ void resetAllVariables();
 
 static AsyncWebServer server(80);
 static Preferences prefs;
+static Preferences programPrefs;
 
 // Task to restart the ESP after sending the response
 static void restartTask(void *pvParameters) {
@@ -33,8 +34,20 @@ void initWebServerSafe() {
     Serial.print("Web UI AP IP: ");
     Serial.println(WiFi.softAPIP());
 
-    // Open preferences namespace
+    // Open preferences namespaces
     prefs.begin("led-config", false);
+    programPrefs.begin("program", false);
+
+    // Migrate program-level settings from legacy keys if needed
+    if (!programPrefs.isKey("auto_start") && prefs.isKey("auto_start_enabled")) {
+        bool legacyAuto = prefs.getBool("auto_start_enabled", false);
+        programPrefs.putBool("auto_start", legacyAuto);
+    }
+    if (!programPrefs.isKey("h2_trans_delay_s") && prefs.isKey("h2_trans_delay_s")) {
+        uint32_t legacyDelay = prefs.getUInt("h2_trans_delay_s", state.hydrogenTransportDelaySeconds);
+        if (legacyDelay > 600) legacyDelay = 600;
+        programPrefs.putUInt("h2_trans_delay_s", legacyDelay);
+    }
 
     // Load all persisted segments with defaults from Config.h
     auto loadSegment = [](const char* startKey, const char* endKey, int defStart, int defEnd, int &outStart, int &outEnd) {
@@ -164,6 +177,19 @@ void initWebServerSafe() {
     state.hydrogenProductionEffectType = loadEffect3("h2_prod_eff", 0);
     state.fabricationEffectType = loadEffect3("fabr_eff", 0);
 
+    state.autoStartEnabled = programPrefs.getBool("auto_start", false);
+    uint16_t transportDelaySec = static_cast<uint16_t>(programPrefs.getUInt(
+        "h2_trans_delay_s",
+        prefs.getUInt("h2_trans_delay_s", state.hydrogenTransportDelaySeconds)));
+    if (!programPrefs.isKey("h2_trans_delay_s")) {
+        programPrefs.putUInt("h2_trans_delay_s", transportDelaySec);
+    }
+    if (!prefs.isKey("h2_trans_delay_s")) {
+        prefs.putUInt("h2_trans_delay_s", transportDelaySec);
+    }
+    if (transportDelaySec > 600) transportDelaySec = 600;
+    state.hydrogenTransportDelaySeconds = static_cast<uint16_t>(transportDelaySec);
+
     // Load per-segment colors (defaults come from SystemState fields)
     state.windColor = loadColor("wind_color", state.windColor);
     state.solarColor = loadColor("solar_color", state.solarColor);
@@ -177,26 +203,6 @@ void initWebServerSafe() {
     state.electricityTransportColor = loadColor("elec_tran_color", state.electricityTransportColor);
     state.storageTransportColor = loadColor("stor_tran_color", state.storageTransportColor);
     state.storagePowerstationColor = loadColor("stor_pow_color", state.storagePowerstationColor);
-
-    // Load activation triggers (defaults from SystemState fields)
-    auto loadTrigger = [](const char* key, TriggerType defVal) -> TriggerType {
-        uint8_t v = prefs.getUChar(key, static_cast<uint8_t>(defVal));
-        if (v > 11) v = static_cast<uint8_t>(defVal); // clamp to valid range
-        return static_cast<TriggerType>(v);
-    };
-    state.windTrigger = loadTrigger("wind_trig", state.windTrigger);
-    state.solarTrigger = loadTrigger("solar_trig", state.solarTrigger);
-    state.electricityProductionTrigger = loadTrigger("elec_prod_trig", state.electricityProductionTrigger);
-    state.electrolyserTrigger = loadTrigger("electrolyser_trig", state.electrolyserTrigger);
-    state.hydrogenProductionTrigger = loadTrigger("h2_prod_trig", state.hydrogenProductionTrigger);
-    state.hydrogenTransportTrigger = loadTrigger("h2_trans_trig", state.hydrogenTransportTrigger);
-    state.hydrogenStorage1Trigger = loadTrigger("h2_stor1_trig", state.hydrogenStorage1Trigger);
-    state.hydrogenStorage2Trigger = loadTrigger("h2_stor2_trig", state.hydrogenStorage2Trigger);
-    state.h2ConsumptionTrigger = loadTrigger("h2_cons_trig", state.h2ConsumptionTrigger);
-    state.fabricationTrigger = loadTrigger("fabr_trig", state.fabricationTrigger);
-    state.electricityTransportTrigger = loadTrigger("elec_tran_trig", state.electricityTransportTrigger);
-    state.storageTransportTrigger = loadTrigger("stor_tran_trig", state.storageTransportTrigger);
-    state.storagePowerstationTrigger = loadTrigger("stor_pow_trig", state.storagePowerstationTrigger);
 
     // Load custom segments
     for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
@@ -281,10 +287,9 @@ void initWebServerSafe() {
             ".line3{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}"
             "</style></head><body>"
             "<div class='logo'><img src='" + String(LOGO_DATA_URI) + "' alt='OakZo Logo'></div>"
-            "<h3>LED Segment Configuration</h3>"
+            "<h3>LED Segment Settings</h3>"
             "<div style='margin:10px 0;'>"
-            "<a href='/'><button type='button'>Segments</button></a>"
-            "<a href='/triggers'><button type='button'>Triggers</button></a>"
+            "<a href='/'><button type='button'>Settings</button></a>"
             "<a href='/status'><button type='button'>Status</button></a>"
             "</div>";
         
@@ -296,6 +301,12 @@ void initWebServerSafe() {
         }
         
     page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
+    page += "<div class='segment'><b>Program Options</b><br>"
+        "Auto-start program (disables manual button): "
+        "<input type='checkbox' name='auto_start' value='1" + String(state.autoStartEnabled ? "' checked" : "'") + ">"
+        "<br>Hydrogen transport delay after electrolyser (seconds): "
+        "<input type='number' name='h2_trans_delay_s' min='0' max='600' value='" + String(state.hydrogenTransportDelaySeconds) + "'>"
+        "</div>";
         
     // Helper lambda to create segment row without trigger dropdown
     auto colorToHexLocal = [](CRGB c) -> String { char buf[8]; sprintf(buf, "%02X%02X%02X", c.r, c.g, c.b); return String("#") + String(buf); };
@@ -372,7 +383,6 @@ void initWebServerSafe() {
     addSegmentDir(state.windName.c_str(), "wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", state.windColor, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType);
     addSegmentDir(state.solarName.c_str(), "solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", state.solarColor, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType);
     addSegmentDir(state.electricityProductionName.c_str(), "elec_prod_name", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", "elec_prod_delay", "elec_prod_eff", "elec_prod_color", state.electricityProductionColor, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd, state.electricityProductionDirForward, state.electricityProductionEnabled, state.electricityProductionDelay, state.electricityProductionEffectType);
-    addSegmentSimple(state.hydrogenProductionName.c_str(), "h2_prod_name", "h2_prod_s", "h2_prod_e", "h2_prod_en", "h2_prod_eff", "h2_prod_dir", "h2_prod_delay", "h2_prod_color", state.hydrogenProductionColor, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionEnabled, state.hydrogenProductionEffectType, state.hydrogenProductionDirForward, state.hydrogenProductionDelay);
     addSegmentDir(state.hydrogenTransportName.c_str(), "h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", state.hydrogenTransportColor, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType);
     addSegmentDir(state.hydrogenStorage1Name.c_str(), "h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", state.hydrogenStorage1Color, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType);
     addSegmentDir(state.hydrogenStorage2Name.c_str(), "h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", state.hydrogenStorage2Color, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType);
@@ -480,147 +490,7 @@ void initWebServerSafe() {
         request->send(200, "text/html", page);
     });
 
-        // Serve triggers configuration page
-        server.on("/triggers", HTTP_GET, [](AsyncWebServerRequest *request){
-            String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Triggers</title>"
-                "<style>body{font-family:Arial,sans-serif;max-width:600px;margin:20px auto;padding:10px;}"
-                ".logo{text-align:center;margin:20px 0;}"
-                ".logo img{max-width:200px;height:auto;}"
-                "h3{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:5px;}"
-                ".segment{background:#f9f9f9;padding:10px;margin:10px 0;border-radius:5px;}"
-                "input,select{padding:5px;margin:5px;}"
-                "select{min-width:150px;}"
-                "button{background:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px;}"
-                "button:hover{background:#45a049;}"
-                ".restart{background:#d9534f;}"
-                ".restart:hover{background:#c9302c;}"
-                "</style></head><body>"
-                "<div class='logo'><img src='" + String(LOGO_DATA_URI) + "' alt='OakZo Logo'></div>"
-                "<h3>Trigger Configuration</h3>"
-                "<div style='margin:10px 0;'>"
-                "<a href='/'><button type='button'>Segments</button></a>"
-                "<a href='/triggers'><button type='button'>Triggers</button></a>"
-                "<a href='/status'><button type='button'>Status</button></a>"
-                "</div>"
-                "<p>Configure which system state activates each LED segment:</p>"
-                "<form id='triggerForm' method=\"POST\" action=\"/update_triggers\">";
-        
-            // Helper to create trigger dropdown
-            auto triggerOptions = [](const char* trigName, TriggerType currentVal) -> String {
-                String opts = "<select name='" + String(trigName) + "'>";
-                opts += "<option value='0'" + String(currentVal==TriggerType::ALWAYS_ON ? " selected" : "") + ">Always On</option>";
-                opts += "<option value='1'" + String(currentVal==TriggerType::WIND ? " selected" : "") + ">Wind</option>";
-                opts += "<option value='2'" + String(currentVal==TriggerType::ELECTRICITY_PROD ? " selected" : "") + ">Electricity Prod</option>";
-                opts += "<option value='3'" + String(currentVal==TriggerType::ELECTROLYSER ? " selected" : "") + ">Electrolyser</option>";
-                opts += "<option value='4'" + String(currentVal==TriggerType::HYDROGEN_PROD ? " selected" : "") + ">Hydrogen Prod</option>";
-                opts += "<option value='5'" + String(currentVal==TriggerType::HYDROGEN_TRANSPORT ? " selected" : "") + ">Hydrogen Transport</option>";
-                opts += "<option value='6'" + String(currentVal==TriggerType::HYDROGEN_STORAGE ? " selected" : "") + ">Hydrogen Storage</option>";
-                opts += "<option value='7'" + String(currentVal==TriggerType::H2_CONSUMPTION ? " selected" : "") + ">H2 Consumption</option>";
-                opts += "<option value='8'" + String(currentVal==TriggerType::FABRICATION ? " selected" : "") + ">Fabrication</option>";
-                opts += "<option value='9'" + String(currentVal==TriggerType::ELECTRICITY_TRANSPORT ? " selected" : "") + ">Electricity Transport</option>";
-                opts += "<option value='10'" + String(currentVal==TriggerType::STORAGE_TRANSPORT ? " selected" : "") + ">Storage Transport</option>";
-                opts += "<option value='11'" + String(currentVal==TriggerType::STORAGE_POWERSTATION ? " selected" : "") + ">Storage Powerstation</option>";
-                opts += "</select>";
-                return opts;
-            };
-        
-            auto addTrigger = [&](const char* nameLabel, const char* trigName, TriggerType trigVal) {
-                page += "<div class='segment'><b>" + String(nameLabel) + "</b><br>"
-                        "Activated by: " + triggerOptions(trigName, trigVal) + "</div>";
-            };
-        
-            addTrigger(state.windName.c_str(), "wind_trig", state.windTrigger);
-            addTrigger(state.solarName.c_str(), "solar_trig", state.solarTrigger);
-            addTrigger(state.electricityProductionName.c_str(), "elec_prod_trig", state.electricityProductionTrigger);
-            addTrigger("Electrolyser", "electrolyser_trig", state.electrolyserTrigger);
-            addTrigger(state.hydrogenProductionName.c_str(), "h2_prod_trig", state.hydrogenProductionTrigger);
-            addTrigger(state.hydrogenTransportName.c_str(), "h2_trans_trig", state.hydrogenTransportTrigger);
-            addTrigger(state.hydrogenStorage1Name.c_str(), "h2_stor1_trig", state.hydrogenStorage1Trigger);
-            addTrigger(state.hydrogenStorage2Name.c_str(), "h2_stor2_trig", state.hydrogenStorage2Trigger);
-            addTrigger(state.h2ConsumptionName.c_str(), "h2_cons_trig", state.h2ConsumptionTrigger);
-            addTrigger(state.fabricationName.c_str(), "fabr_trig", state.fabricationTrigger);
-            addTrigger(state.electricityTransportName.c_str(), "elec_tran_trig", state.electricityTransportTrigger);
-            addTrigger(state.storageTransportName.c_str(), "stor_tran_trig", state.storageTransportTrigger);
-            addTrigger(state.storagePowerstationName.c_str(), "stor_pow_trig", state.storagePowerstationTrigger);
-            // Custom triggers
-            for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
-                if (!state.custom[i].inUse) continue;
-                String idx = String(i);
-                String trigName = "cust" + idx + "_trig";
-                addTrigger(state.custom[i].name.c_str(), trigName.c_str(), state.custom[i].trigger);
-            }
-        
-            page += "<button type='submit'>Save All Triggers</button></form><hr>"
-                "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
-                "<button type='submit' class='restart'>Restart ESP</button></form></body></html>";
-        
-            request->send(200, "text/html", page);
-        });
-
-        // Handle trigger updates
-        server.on("/update_triggers", HTTP_POST, [](AsyncWebServerRequest *request){
-            auto getTrigger = [&](const char* name, uint8_t &outTrig) -> bool {
-                if (!request->hasParam(name, true)) return false;
-                int v = request->getParam(name, true)->value().toInt();
-                if (v < 0 || v > 11) return false;
-                outTrig = static_cast<uint8_t>(v);
-                return true;
-            };
-            
-            uint8_t wtrig, strig, eptrig, elytrig, hptrig, httrig, hs1trig, hs2trig, hctrig, fbtrig, ettrig, sttrig, sptrig;
-            // For built-ins, require all triggers to avoid partial save confusion
-            if (!getTrigger("wind_trig", wtrig) || !getTrigger("solar_trig", strig) || !getTrigger("elec_prod_trig", eptrig) ||
-                !getTrigger("electrolyser_trig", elytrig) || !getTrigger("h2_prod_trig", hptrig) || !getTrigger("h2_trans_trig", httrig) ||
-                !getTrigger("h2_stor1_trig", hs1trig) || !getTrigger("h2_stor2_trig", hs2trig) || !getTrigger("h2_cons_trig", hctrig) ||
-                !getTrigger("fabr_trig", fbtrig) || !getTrigger("elec_tran_trig", ettrig) || !getTrigger("stor_tran_trig", sttrig) ||
-                !getTrigger("stor_pow_trig", sptrig)) {
-                request->send(400, "text/plain", "Missing or invalid trigger parameters");
-                return;
-            }
-        
-            // Save triggers to preferences
-            prefs.putUChar("wind_trig", wtrig);
-            prefs.putUChar("solar_trig", strig);
-            prefs.putUChar("elec_prod_trig", eptrig);
-            prefs.putUChar("electrolyser_trig", elytrig);
-            prefs.putUChar("h2_prod_trig", hptrig);
-            prefs.putUChar("h2_trans_trig", httrig);
-            prefs.putUChar("h2_stor1_trig", hs1trig);
-            prefs.putUChar("h2_stor2_trig", hs2trig);
-            prefs.putUChar("h2_cons_trig", hctrig);
-            prefs.putUChar("fabr_trig", fbtrig);
-            prefs.putUChar("elec_tran_trig", ettrig);
-            prefs.putUChar("stor_tran_trig", sttrig);
-            prefs.putUChar("stor_pow_trig", sptrig);
-        
-            // Update runtime state
-            state.windTrigger = static_cast<TriggerType>(wtrig);
-            state.solarTrigger = static_cast<TriggerType>(strig);
-            state.electricityProductionTrigger = static_cast<TriggerType>(eptrig);
-            state.electrolyserTrigger = static_cast<TriggerType>(elytrig);
-            state.hydrogenProductionTrigger = static_cast<TriggerType>(hptrig);
-            state.hydrogenTransportTrigger = static_cast<TriggerType>(httrig);
-            state.hydrogenStorage1Trigger = static_cast<TriggerType>(hs1trig);
-            state.hydrogenStorage2Trigger = static_cast<TriggerType>(hs2trig);
-            state.h2ConsumptionTrigger = static_cast<TriggerType>(hctrig);
-            state.fabricationTrigger = static_cast<TriggerType>(fbtrig);
-            state.electricityTransportTrigger = static_cast<TriggerType>(ettrig);
-            state.storageTransportTrigger = static_cast<TriggerType>(sttrig);
-            state.storagePowerstationTrigger = static_cast<TriggerType>(sptrig);
-        
-            // Custom triggers
-            for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
-                String idx = String(i);
-                String key = "cust" + idx + "_trig";
-                uint8_t cv;
-                if (getTrigger(key.c_str(), cv)) {
-                    prefs.putUChar((String("cust") + idx + "_trig").c_str(), cv);
-                    state.custom[i].trigger = static_cast<TriggerType>(cv);
-                }
-            }
-
-            request->redirect("/triggers");
-        });
+        // Trigger configuration view removed; triggers now fixed in firmware defaults.
 
         // Status page - shows current trigger states
         server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -634,6 +504,8 @@ void initWebServerSafe() {
                 ".status.on{background:#4CAF50;color:white;}"
                 ".status.off{background:#ccc;color:#666;}"
                 "button{background:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px;}"
+                "button.reset{background:#d9534f;}"
+                "button.reset:hover{background:#c9302c;}"
                 "button:hover{background:#45a049;}"
                 "</style>"
                 "<script>"
@@ -646,11 +518,15 @@ void initWebServerSafe() {
                 "<div class='logo'><img src='" + String(LOGO_DATA_URI) + "' alt='OakZo Logo'></div>"
                 "<h3>Trigger Status Monitor</h3>"
                 "<div style='margin:10px 0;'>"
-                "<a href='/'><button type='button'>Segments</button></a>"
-                "<a href='/triggers'><button type='button'>Triggers</button></a>"
+                "<a href='/'><button type='button'>Settings</button></a>"
                 "<a href='/status'><button type='button'>Status</button></a>"
                 "</div>"
                 "<p>Live status of all trigger conditions (auto-refreshes every 2 seconds):</p>";
+          page += "<div style='margin:15px 0;'>"
+                 "<form method='POST' action='/reset_loop' onsubmit=\"return confirm('Reset the program loop?');\" style='display:inline;'>"
+                 "<button type='submit' class='reset'>Reset Program Loop</button>"
+                 "</form>"
+                 "</div>";
         
             // Helper to show trigger status using EffectUtils::isTriggerActive
             auto showTriggerStatus = [&](const char* label, TriggerType trigger) {
@@ -663,7 +539,6 @@ void initWebServerSafe() {
             showTriggerStatus("Solar Trigger (uses Wind)", TriggerType::WIND);  // Solar uses Wind trigger by default
             showTriggerStatus("Electricity Production", TriggerType::ELECTRICITY_PROD);
             showTriggerStatus("Electrolyser", TriggerType::ELECTROLYSER);
-            showTriggerStatus("Hydrogen Production", TriggerType::HYDROGEN_PROD);
             showTriggerStatus("Hydrogen Transport", TriggerType::HYDROGEN_TRANSPORT);
             showTriggerStatus("Hydrogen Storage", TriggerType::HYDROGEN_STORAGE);
             showTriggerStatus("H2 Consumption", TriggerType::H2_CONSUMPTION);
@@ -674,6 +549,15 @@ void initWebServerSafe() {
         
             page += "</body></html>";
             request->send(200, "text/html", page);
+        });
+
+        server.on("/reset_loop", HTTP_POST, [](AsyncWebServerRequest *request){
+            resetAllVariables();
+            state.windOn = false;
+            state.buttonDisabled = false;
+            state.generalTimerActive = false;
+            digitalWrite(BUTTON_LED_PIN, HIGH);
+            request->redirect("/status");
         });
 
         // Add a custom segment slot
@@ -769,6 +653,13 @@ void initWebServerSafe() {
             outDelay = d;
             return true;
         };
+        auto getDelaySeconds = [&](const char* name, uint16_t &outSeconds) -> bool {
+            if (!request->hasParam(name, true)) return false;
+            int v = request->getParam(name, true)->value().toInt();
+            if (v < 0 || v > 600) return false;
+            outSeconds = static_cast<uint16_t>(v);
+            return true;
+        };
         auto getEffect3 = [&](const char* name, int &outEff) -> bool {
             if (!request->hasParam(name, true)) return false;
             int v = request->getParam(name, true)->value().toInt();
@@ -777,18 +668,18 @@ void initWebServerSafe() {
             return true;
         };
 
-    int ws, we, ss, se, eps, epe, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
-    bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir, hpdir, fbdir;
-    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly, hpdly, fbdly;
+    int ws, we, ss, se, eps, epe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
+    bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir, fbdir;
+    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly, fbdly;
     int weff, seff, epeff, hteff, h1eff, h2eff, hceff, eteff, steff, speff;
-    int hpeff, fbeff; // hydrogen production and fabrication effects
-    uint32_t wcol, scol, epcol, hpcol, htcol, hs1col, hs2col, hccol, fbcol, etcol, stcol, spcol;
-    String wname, sname, epname, hpname, htname, hs1name, hs2name, hcname, fbname, etname, stname, spname;
+    int fbeff; // fabrication effect
+    uint32_t wcol, scol, epcol, htcol, hs1col, hs2col, hccol, fbcol, etcol, stcol, spcol;
+    String wname, sname, epname, htname, hs1name, hs2name, hcname, fbname, etname, stname, spname;
+    uint16_t h2delaySeconds;
         
         if (!getSegment("wind_start", "wind_end", ws, we) ||
             !getSegment("solar_start", "solar_end", ss, se) ||
             !getSegment("elec_prod_s", "elec_prod_e", eps, epe) ||
-            !getSegment("h2_prod_s", "h2_prod_e", hps, hpe) ||
             !getSegment("h2_trans_s", "h2_trans_e", hts, hte) ||
             !getSegment("h2_stor1_s", "h2_stor1_e", h1s, h1e) ||
             !getSegment("h2_stor2_s", "h2_stor2_e", h2s, h2e) ||
@@ -807,7 +698,6 @@ void initWebServerSafe() {
             !getDir("elec_tran_dir", etdir) ||
             !getDir("stor_tran_dir", stdir) ||
             !getDir("stor_pow_dir", spdir) ||
-            !getDir("h2_prod_dir", hpdir) ||
             !getDir("fabr_dir", fbdir) ||
             !getEffect3("wind_eff", weff) ||
             !getEffect3("solar_eff", seff) ||
@@ -819,13 +709,11 @@ void initWebServerSafe() {
             !getEffect3("elec_tran_eff", eteff) ||
             !getEffect3("stor_tran_eff", steff) ||
             !getEffect3("stor_pow_eff", speff) ||
-            !getEffect3("h2_prod_eff", hpeff) ||
             !getEffect3("fabr_eff", fbeff) ||
             // Colors must be present when saving
             !request->hasParam("wind_color", true) ||
             !request->hasParam("solar_color", true) ||
             !request->hasParam("elec_prod_color", true) ||
-            !request->hasParam("h2_prod_color", true) ||
             !request->hasParam("h2_trans_color", true) ||
             !request->hasParam("h2_stor1_color", true) ||
             !request->hasParam("h2_stor2_color", true) ||
@@ -844,12 +732,11 @@ void initWebServerSafe() {
             !getDelay("elec_tran_delay", etdly) ||
             !getDelay("stor_tran_delay", stdly) ||
             !getDelay("stor_pow_delay", spdly) ||
-            !getDelay("h2_prod_delay", hpdly) ||
-                !getDelay("fabr_delay", fbdly) ||
+            !getDelay("fabr_delay", fbdly) ||
+            !getDelaySeconds("h2_trans_delay_s", h2delaySeconds) ||
             !getName("wind_name", wname) ||
             !getName("solar_name", sname) ||
             !getName("elec_prod_name", epname) ||
-            !getName("h2_prod_name", hpname) ||
             !getName("h2_trans_name", htname) ||
             !getName("h2_stor1_name", hs1name) ||
             !getName("h2_stor2_name", hs2name) ||
@@ -874,7 +761,6 @@ void initWebServerSafe() {
         if (!parseHexColor("wind_color", wcol) ||
             !parseHexColor("solar_color", scol) ||
             !parseHexColor("elec_prod_color", epcol) ||
-            !parseHexColor("h2_prod_color", hpcol) ||
             !parseHexColor("h2_trans_color", htcol) ||
             !parseHexColor("h2_stor1_color", hs1col) ||
             !parseHexColor("h2_stor2_color", hs2col) ||
@@ -891,7 +777,6 @@ void initWebServerSafe() {
         bool wen  = getCheckbox("wind_en");
         bool sen  = getCheckbox("solar_en");
         bool epen = getCheckbox("elec_prod_en");
-        bool hpen = getCheckbox("h2_prod_en");
         bool hten = getCheckbox("h2_trans_en");
         bool hsen = getCheckbox("h2_stor_en");
         bool hcen = getCheckbox("h2_cons_en");
@@ -900,6 +785,7 @@ void initWebServerSafe() {
         bool sten = getCheckbox("stor_tran_en");
         bool spen = getCheckbox("stor_pow_en");
         bool elyen = getCheckbox("electrolyser_en");
+        bool autoStart = getCheckbox("auto_start");
 
         // Build a temporary list of enabled segments (built-ins + in-use customs) to check for overlap BEFORE saving anything
         struct RangeItem { String name; int s; int e; };
@@ -910,7 +796,6 @@ void initWebServerSafe() {
         addRange(wname, ws, we, wen);
         addRange(sname, ss, se, sen);
         addRange(epname, eps, epe, epen);
-        addRange(hpname, hps, hpe, hpen);
         addRange(htname, hts, hte, hten);
         addRange(hs1name, h1s, h1e, hsen);
         addRange(hs2name, h2s, h2e, hsen);
@@ -970,7 +855,6 @@ void initWebServerSafe() {
         prefs.putString("wind_name", wname);
         prefs.putString("solar_name", sname);
         prefs.putString("elec_prod_name", epname);
-        prefs.putString("h2_prod_name", hpname);
         prefs.putString("h2_trans_name", htname);
         prefs.putString("h2_stor1_name", hs1name);
         prefs.putString("h2_stor2_name", hs2name);
@@ -982,21 +866,19 @@ void initWebServerSafe() {
         prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we);
         prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se);
         prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe);
-        prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe);
         prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte);
         prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e);
         prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e);
-    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce);
-    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
-    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete);
-    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste);
-    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe);
+        prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce);
+        prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe);
+        prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete);
+        prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste);
+        prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe);
 
     // Update runtime state
         state.windName = wname;
         state.solarName = sname;
         state.electricityProductionName = epname;
-        state.hydrogenProductionName = hpname;
         state.hydrogenTransportName = htname;
         state.hydrogenStorage1Name = hs1name;
         state.hydrogenStorage2Name = hs2name;
@@ -1008,7 +890,6 @@ void initWebServerSafe() {
         state.windSegmentStart = ws; state.windSegmentEnd = we;
         state.solarSegmentStart = ss; state.solarSegmentEnd = se;
         state.electricityProductionSegmentStart = eps; state.electricityProductionSegmentEnd = epe;
-        state.hydrogenProductionSegmentStart = hps; state.hydrogenProductionSegmentEnd = hpe;
         state.hydrogenTransportSegmentStart = hts; state.hydrogenTransportSegmentEnd = hte;
         state.hydrogenStorage1SegmentStart = h1s; state.hydrogenStorage1SegmentEnd = h1e;
         state.hydrogenStorage2SegmentStart = h2s; state.hydrogenStorage2SegmentEnd = h2e;
@@ -1018,117 +899,119 @@ void initWebServerSafe() {
         state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
 
-    // Save all to preferences (directions, enables, and delays too)
-    prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen); prefs.putInt("wind_delay", wdly);
-    prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen); prefs.putInt("solar_delay", sdly);
-    prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen); prefs.putInt("elec_prod_delay", epdly);
-    prefs.putInt("h2_prod_s", hps); prefs.putInt("h2_prod_e", hpe); prefs.putBool("h2_prod_en", hpen); prefs.putBool("h2_prod_dir", hpdir); prefs.putInt("h2_prod_delay", hpdly);
-    prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten); prefs.putInt("h2_trans_delay", htdly);
-    prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir); prefs.putInt("h2_stor1_delay", h1dly);
-    prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen); prefs.putInt("h2_stor2_delay", h2dly);
-    prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen); prefs.putInt("h2_cons_delay", hcdly);
-    prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben); prefs.putBool("fabr_dir", fbdir); prefs.putInt("fabr_delay", fbdly);
-    prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten); prefs.putInt("elec_tran_delay", etdly);
-    prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten); prefs.putInt("stor_tran_delay", stdly);
-    prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen); prefs.putInt("stor_pow_delay", spdly);
-    // Effect types
-    prefs.putInt("wind_eff", weff);
-    prefs.putInt("solar_eff", seff);
-    prefs.putInt("elec_prod_eff", epeff);
-    prefs.putInt("h2_trans_eff", hteff);
-    prefs.putInt("h2_stor1_eff", h1eff);
-    prefs.putInt("h2_stor2_eff", h2eff);
-    prefs.putInt("h2_cons_eff", hceff);
-    prefs.putInt("elec_tran_eff", eteff);
-    prefs.putInt("stor_tran_eff", steff);
-    prefs.putInt("stor_pow_eff", speff);
-    prefs.putInt("h2_prod_eff", hpeff);
-    prefs.putInt("fabr_eff", fbeff);
-    prefs.putBool("electrolyser_en", elyen);
-    // Save colors
-    prefs.putUInt("wind_color", wcol);
-    prefs.putUInt("solar_color", scol);
-    prefs.putUInt("elec_prod_color", epcol);
-    prefs.putUInt("h2_prod_color", hpcol);
-    prefs.putUInt("h2_trans_color", htcol);
-    prefs.putUInt("h2_stor1_color", hs1col);
-    prefs.putUInt("h2_stor2_color", hs2col);
-    prefs.putUInt("h2_cons_color", hccol);
-    prefs.putUInt("fabr_color", fbcol);
-    prefs.putUInt("elec_tran_color", etcol);
-    prefs.putUInt("stor_tran_color", stcol);
-    prefs.putUInt("stor_pow_color", spcol);
+        // Save all to preferences (directions, enables, and delays too)
+        prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen); prefs.putInt("wind_delay", wdly);
+        prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen); prefs.putInt("solar_delay", sdly);
+        prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen); prefs.putInt("elec_prod_delay", epdly);
+        prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten); prefs.putInt("h2_trans_delay", htdly);
+        prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir); prefs.putInt("h2_stor1_delay", h1dly);
+        prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen); prefs.putInt("h2_stor2_delay", h2dly);
+        prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen); prefs.putInt("h2_cons_delay", hcdly);
+        prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben); prefs.putBool("fabr_dir", fbdir); prefs.putInt("fabr_delay", fbdly);
+        prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten); prefs.putInt("elec_tran_delay", etdly);
+        prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten); prefs.putInt("stor_tran_delay", stdly);
+        prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen); prefs.putInt("stor_pow_delay", spdly);
+        // Effect types
+        prefs.putInt("wind_eff", weff);
+        prefs.putInt("solar_eff", seff);
+        prefs.putInt("elec_prod_eff", epeff);
+        prefs.putInt("h2_trans_eff", hteff);
+        prefs.putInt("h2_stor1_eff", h1eff);
+        prefs.putInt("h2_stor2_eff", h2eff);
+        prefs.putInt("h2_cons_eff", hceff);
+        prefs.putInt("elec_tran_eff", eteff);
+        prefs.putInt("stor_tran_eff", steff);
+        prefs.putInt("stor_pow_eff", speff);
+        prefs.putInt("fabr_eff", fbeff);
+        prefs.putBool("electrolyser_en", elyen);
+        // Save colors
+        prefs.putUInt("wind_color", wcol);
+        prefs.putUInt("solar_color", scol);
+        prefs.putUInt("elec_prod_color", epcol);
+        prefs.putUInt("h2_trans_color", htcol);
+        prefs.putUInt("h2_stor1_color", hs1col);
+        prefs.putUInt("h2_stor2_color", hs2col);
+        prefs.putUInt("h2_cons_color", hccol);
+        prefs.putUInt("fabr_color", fbcol);
+        prefs.putUInt("elec_tran_color", etcol);
+        prefs.putUInt("stor_tran_color", stcol);
+        prefs.putUInt("stor_pow_color", spcol);
 
-    // Update directions in runtime state
-    state.windDirForward = wdir;
-    state.solarDirForward = sdir;
-    state.electricityProductionDirForward = epdir;
-    state.hydrogenTransportDirForward = htdir;
-    state.hydrogenStorage1DirForward = h1dir;
-    state.hydrogenStorage2DirForward = h2dir;
-    state.h2ConsumptionDirForward = hcdir;
-    state.electricityTransportDirForward = etdir;
-    state.storageTransportDirForward = stdir;
-    state.storagePowerstationDirForward = spdir;
-    state.hydrogenProductionDirForward = hpdir;
-    state.fabricationDirForward = fbdir;
+    programPrefs.putBool("auto_start", autoStart);
+    programPrefs.putUInt("h2_trans_delay_s", static_cast<uint32_t>(h2delaySeconds));
+    prefs.putUInt("h2_trans_delay_s", h2delaySeconds); // keep legacy namespace in sync for safety
 
-    // Update enabled flags in runtime state
-    state.windEnabled = wen;
-    state.solarEnabled = sen;
-    state.electricityProductionEnabled = epen;
-    state.electrolyserEnabled = elyen;
-    state.hydrogenProductionEnabled = hpen;
-    state.hydrogenTransportEnabled = hten;
-    state.hydrogenStorageEnabled = hsen;
-    state.h2ConsumptionEnabled = hcen;
-    state.fabricationEnabled = fben;
-    state.electricityTransportEnabled = eten;
-    state.storageTransportEnabled = sten;
-    state.storagePowerstationEnabled = spen;
+        // Update directions in runtime state
+        state.windDirForward = wdir;
+        state.solarDirForward = sdir;
+        state.electricityProductionDirForward = epdir;
+        state.hydrogenTransportDirForward = htdir;
+        state.hydrogenStorage1DirForward = h1dir;
+        state.hydrogenStorage2DirForward = h2dir;
+        state.h2ConsumptionDirForward = hcdir;
+        state.electricityTransportDirForward = etdir;
+        state.storageTransportDirForward = stdir;
+        state.storagePowerstationDirForward = spdir;
+        state.fabricationDirForward = fbdir;
 
-    // Update delays in runtime state
-    state.windDelay = wdly;
-    state.solarDelay = sdly;
-    state.electricityProductionDelay = epdly;
-    state.hydrogenTransportDelay = htdly;
-    state.hydrogenStorage1Delay = h1dly;
-    state.hydrogenStorage2Delay = h2dly;
-    state.h2ConsumptionDelay = hcdly;
-    state.electricityTransportDelay = etdly;
-    state.storageTransportDelay = stdly;
-    state.storagePowerstationDelay = spdly;
-    state.hydrogenProductionDelay = hpdly;
-    state.fabricationDelay = fbdly;
+        // Update enabled flags in runtime state
+        state.windEnabled = wen;
+        state.solarEnabled = sen;
+        state.electricityProductionEnabled = epen;
+        state.electrolyserEnabled = elyen;
+        state.hydrogenTransportEnabled = hten;
+        state.hydrogenStorageEnabled = hsen;
+        state.h2ConsumptionEnabled = hcen;
+        state.fabricationEnabled = fben;
+        state.electricityTransportEnabled = eten;
+        state.storageTransportEnabled = sten;
+        state.storagePowerstationEnabled = spen;
+        state.autoStartEnabled = autoStart;
+        if (!autoStart) {
+            state.autoStartTriggered = false;
+            state.buttonDisabled = false;
+        }
 
-    // Update effect types in runtime
-    state.windEffectType = weff;
-    state.solarEffectType = seff;
-    state.electricityProductionEffectType = epeff;
-    state.hydrogenTransportEffectType = hteff;
-    state.hydrogenStorage1EffectType = h1eff;
-    state.hydrogenStorage2EffectType = h2eff;
-    state.h2ConsumptionEffectType = hceff;
-    state.electricityTransportEffectType = eteff;
-    state.storageTransportEffectType = steff;
-    state.storagePowerstationEffectType = speff;
-    state.hydrogenProductionEffectType = hpeff;
-    state.fabricationEffectType = fbeff;
+        // Update delays in runtime state
+        state.windDelay = wdly;
+        state.solarDelay = sdly;
+        state.electricityProductionDelay = epdly;
+        state.hydrogenTransportDelay = htdly;
+        state.hydrogenStorage1Delay = h1dly;
+        state.hydrogenStorage2Delay = h2dly;
+        state.h2ConsumptionDelay = hcdly;
+        state.electricityTransportDelay = etdly;
+        state.storageTransportDelay = stdly;
+        state.storagePowerstationDelay = spdly;
+        state.fabricationDelay = fbdly;
+    state.hydrogenTransportDelaySeconds = h2delaySeconds;
 
-    // Update colors in runtime
-    auto unpackColorLocal = [](uint32_t v) -> CRGB { return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); };
-    state.windColor = unpackColorLocal(wcol);
-    state.solarColor = unpackColorLocal(scol);
-    state.electricityProductionColor = unpackColorLocal(epcol);
-    state.hydrogenProductionColor = unpackColorLocal(hpcol);
-    state.hydrogenTransportColor = unpackColorLocal(htcol);
-    state.hydrogenStorage1Color = unpackColorLocal(hs1col);
-    state.hydrogenStorage2Color = unpackColorLocal(hs2col);
-    state.h2ConsumptionColor = unpackColorLocal(hccol);
-    state.fabricationColor = unpackColorLocal(fbcol);
-    state.electricityTransportColor = unpackColorLocal(etcol);
-    state.storageTransportColor = unpackColorLocal(stcol);
-    state.storagePowerstationColor = unpackColorLocal(spcol);
+        // Update effect types in runtime
+        state.windEffectType = weff;
+        state.solarEffectType = seff;
+        state.electricityProductionEffectType = epeff;
+        state.hydrogenTransportEffectType = hteff;
+        state.hydrogenStorage1EffectType = h1eff;
+        state.hydrogenStorage2EffectType = h2eff;
+        state.h2ConsumptionEffectType = hceff;
+        state.electricityTransportEffectType = eteff;
+        state.storageTransportEffectType = steff;
+        state.storagePowerstationEffectType = speff;
+        state.fabricationEffectType = fbeff;
+
+        // Update colors in runtime
+        auto unpackColorLocal = [](uint32_t v) -> CRGB { return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); };
+        state.windColor = unpackColorLocal(wcol);
+        state.solarColor = unpackColorLocal(scol);
+        state.electricityProductionColor = unpackColorLocal(epcol);
+        state.hydrogenTransportColor = unpackColorLocal(htcol);
+        state.hydrogenStorage1Color = unpackColorLocal(hs1col);
+        state.hydrogenStorage2Color = unpackColorLocal(hs2col);
+        state.h2ConsumptionColor = unpackColorLocal(hccol);
+        state.fabricationColor = unpackColorLocal(fbcol);
+        state.electricityTransportColor = unpackColorLocal(etcol);
+        state.storageTransportColor = unpackColorLocal(stcol);
+        state.storagePowerstationColor = unpackColorLocal(spcol);
 
         // Handle custom segments - use the tmpCustoms data already parsed for overlap validation
         for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {

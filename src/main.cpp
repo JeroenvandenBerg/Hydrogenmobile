@@ -26,6 +26,7 @@ void updateRelays();
 void checkButtonState();
 void resetAllVariables();
 void runTestMode();
+void startProgramAuto();
 
 // ========================== Setup & Loop ==========================
 void setup() {
@@ -41,10 +42,13 @@ void setup() {
     initWebServerSafe();
     // ensure runtime index uses the possibly overridden start and configured direction
     state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
-    state.windOn = true;
 }
 
 void loop() {
+    if (state.autoStartEnabled && !state.autoStartTriggered && !state.generalTimerActive && !state.testMode) {
+        startProgramAuto();
+    }
+
     if (state.testMode) {
         runTestMode();
     } else {
@@ -102,6 +106,10 @@ void checkButtonState() {
         return;
     }
 
+    if (state.autoStartEnabled) {
+        return;
+    }
+
     // Debounced button check
     if (currentMillis - timers.previousButtonCheckMillis >= BUTTON_CHECK_INTERVAL) {
         timers.previousButtonCheckMillis = currentMillis;
@@ -129,6 +137,7 @@ void resetAllVariables() {
     state.electricityProductionOn = false;
     state.electrolyserOn = false;
     state.hydrogenTransportOn = false;
+    state.hydrogenTransportDelayActive = false;
     state.hydrogenProductionOn = false;
     state.hydrogenStorageOn = false;
     state.hydrogenStorageFull = false;
@@ -140,6 +149,7 @@ void resetAllVariables() {
     state.streetLightOn = false;
     state.emptyPipe = false;
     state.pipeEmpty = false;
+    state.autoStartTriggered = false;
 
     // reset timers to now (avoid immediate re-trigger)
     uint32_t now = millis();
@@ -191,6 +201,15 @@ void resetAllVariables() {
     timers.generalTimerStartTime = 0;
     state.generalTimerActive = false;
     state.storageTimerStarted = false;
+}
+
+void startProgramAuto() {
+    state.autoStartTriggered = true;
+    state.buttonDisabled = true;
+    state.generalTimerActive = true;
+    timers.generalTimerStartTime = millis();
+    state.windOn = true;
+    digitalWrite(BUTTON_LED_PIN, LOW);
 }
 
 void runTestMode() {

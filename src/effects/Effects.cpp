@@ -16,6 +16,11 @@ void updateWindEffect(SystemState &state, Timers &timers) {
     bool windTriggerActive = EffectUtils::isTriggerActive(state, state.windTrigger);
     
     if (windTriggerActive) {
+        int prevWindIndex = state.windSegment;
+        bool prevWindFirstRun = state.firstRunWind;
+        int prevSolarIndex = state.solarSegment;
+        bool prevSolarFirstRun = state.firstRunSolar;
+
         // Wind segment
         if (state.windEnabled) {
             if (state.windEffectType == 1) {
@@ -88,8 +93,10 @@ void updateWindEffect(SystemState &state, Timers &timers) {
         }
 
         // Trigger electricity production if enabled and if at least one enabled source has reached terminal
-        bool windReachedTerminal = state.windEnabled && (state.windSegment == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
-        bool solarReachedTerminal = state.solarEnabled && (state.solarSegment == EffectUtils::terminalBound(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd));
+        bool windReachedTerminal = state.windEnabled && !prevWindFirstRun &&
+            (prevWindIndex == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
+        bool solarReachedTerminal = state.solarEnabled && !prevSolarFirstRun &&
+            (prevSolarIndex == EffectUtils::terminalBound(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd));
         
         if (state.electricityProductionEnabled && (windReachedTerminal || solarReachedTerminal)) {
             state.electricityProductionOn = true;
@@ -111,6 +118,9 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
     bool triggerActive = EffectUtils::isTriggerActive(state, state.electricityProductionTrigger);
     
     if (triggerActive && state.electricityProductionEnabled) {
+        int prevIndex = state.electricityProductionSegment;
+        bool prevFirstRun = state.firstRunElectricityProduction;
+
         if (state.electricityProductionEffectType == 1) {
             fireEffect(state.leds, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
             EffectUtils::advanceIndexDir(state.electricityProductionDelay,
@@ -139,10 +149,22 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
             );
         }
 
-        if (state.electricityProductionSegment == EffectUtils::terminalBound(state.electricityProductionDirForward, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd)) {
-            if (!state.electrolyserOn && state.electrolyserEnabled) {
+        bool reachedTerminal = !prevFirstRun &&
+            (prevIndex == EffectUtils::terminalBound(state.electricityProductionDirForward,
+                                                     state.electricityProductionSegmentStart,
+                                                     state.electricityProductionSegmentEnd));
+
+        if (reachedTerminal && state.electrolyserEnabled) {
+            if (!state.electrolyserOn) {
                 state.electrolyserOn = true;
                 timers.previousMillisElectrolyser = millis();
+                state.hydrogenTransportDelayActive = true;
+                if (state.hydrogenTransportDelaySeconds == 0) {
+                    state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+                    state.hydrogenTransportDelayActive = false;
+                } else {
+                    state.hydrogenTransportOn = false;
+                }
             }
         }
     } else {
@@ -150,20 +172,33 @@ void updateElectricityProductionEffect(SystemState &state, Timers &timers) {
         state.firstRunElectricityProduction = true;
         state.electricityProductionSegment = EffectUtils::initialIndex(state.electricityProductionDirForward, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
         state.electrolyserOn = false;
+        state.hydrogenTransportOn = false;
+        state.hydrogenTransportDelayActive = false;
+        state.hydrogenProductionOn = false;
     }
 }
 
 // ---- Electrolyser
 void updateElectrolyserEffect(SystemState &state, Timers &timers) {
-    bool triggerActive = EffectUtils::isTriggerActive(state, state.electrolyserTrigger);
-    if (triggerActive && state.electrolyserEnabled) {
-        if (millis() - timers.previousMillisElectrolyser >= HYDROGEN_PRODUCTION_DELAY_MS) {
-            if (state.hydrogenProductionEnabled) {
-                state.hydrogenProductionOn = true;
-            }
+    if (!state.electrolyserEnabled) {
+        state.electrolyserOn = false;
+    }
+
+    if (!state.electrolyserOn) {
+        state.hydrogenTransportOn = false;
+        state.hydrogenTransportDelayActive = false;
+        return;
+    }
+
+    if (state.hydrogenTransportDelayActive) {
+        uint32_t elapsed = millis() - timers.previousMillisElectrolyser;
+        uint32_t required = static_cast<uint32_t>(state.hydrogenTransportDelaySeconds) * 1000UL;
+        if (elapsed >= required) {
+            state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+            state.hydrogenTransportDelayActive = false;
         }
     } else {
-        state.hydrogenProductionOn = false;
+        state.hydrogenTransportOn = state.hydrogenTransportEnabled;
     }
 }
 
@@ -172,6 +207,7 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
     bool triggerActive = EffectUtils::isTriggerActive(state, state.hydrogenProductionTrigger);
     
     if (triggerActive && state.hydrogenProductionEnabled) {
+        state.hydrogenProductionOn = true;
         // 0=Running, 1=Fire, 2=Fade
         if (state.hydrogenProductionEffectType == 1) {
             // Fire effect
@@ -196,14 +232,11 @@ void updateHydrogenProductionEffect(SystemState &state, Timers &timers) {
                 state.hydrogenProductionDirForward
             );
         }
-        if (state.hydrogenTransportEnabled) {
-            state.hydrogenTransportOn = true;
-        }
     } else {
         EffectUtils::clearRange(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
         state.firstRunHydrogenProduction = true;
         state.hydrogenProductionSegment = EffectUtils::initialIndex(state.hydrogenProductionDirForward, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
-        state.hydrogenTransportOn = false;
+        state.hydrogenProductionOn = false;
     }
 }
 

@@ -60,6 +60,7 @@ struct SystemState {
     bool electricityProductionOn = false;
     bool electrolyserOn = false;
     bool hydrogenTransportOn = false;
+    bool hydrogenTransportDelayActive = false;
     bool hydrogenProductionOn = false;
     bool hydrogenStorageOn = false;
     bool hydrogenStorageFull = false;
@@ -83,6 +84,10 @@ struct SystemState {
     int testDelay = 500;
     int testPhase = 0; // 0=LED check, 1=effect demo
     uint32_t testPhaseStartTime = 0;
+
+    bool autoStartEnabled = false;
+    bool autoStartTriggered = false;
+    uint16_t hydrogenTransportDelaySeconds = 15; // Delay between electrolyser and hydrogen transport (seconds)
 
     // Enable flags per segment/effect
     bool windEnabled = true;
@@ -187,7 +192,7 @@ struct SystemState {
     TriggerType solarTrigger = TriggerType::WIND;
     TriggerType electricityProductionTrigger = TriggerType::ELECTRICITY_PROD;
     TriggerType electrolyserTrigger = TriggerType::ELECTROLYSER;  // Set to true when electricity production reaches terminal
-    TriggerType hydrogenProductionTrigger = TriggerType::HYDROGEN_PROD;
+    TriggerType hydrogenProductionTrigger = TriggerType::ELECTROLYSER;
     TriggerType hydrogenTransportTrigger = TriggerType::HYDROGEN_TRANSPORT;
     TriggerType hydrogenStorage1Trigger = TriggerType::HYDROGEN_STORAGE;
     TriggerType hydrogenStorage2Trigger = TriggerType::HYDROGEN_STORAGE;
