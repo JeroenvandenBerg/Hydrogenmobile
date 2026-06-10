@@ -87,7 +87,24 @@ struct SystemState {
 
     bool autoStartEnabled = false;
     bool autoStartTriggered = false;
+    uint16_t windStopSeconds = static_cast<uint16_t>(WIND_TIME_MS / 1000U); // Stop wind/solar after this runtime
     uint16_t hydrogenTransportDelaySeconds = 15; // Delay between electrolyser and hydrogen transport (seconds)
+    uint16_t totalLeds = DEFAULT_LED_COUNT;      // Active LED count; can be lowered via web UI
+
+    // Runtime-configurable IO pins
+    uint8_t ledDataPin = DATA_PIN;
+    uint8_t buttonPin = BUTTON_PIN;
+    uint8_t buttonLedPin = BUTTON_LED_PIN;
+    uint8_t streetLedPin = STREET_LED_PIN;
+    uint8_t windRelayPin = WIND_TURBINE_RELAY_PIN;
+    uint8_t electrolyserRelayPin = ELECTROLYSER_RELAY_PIN;
+    uint8_t windInfoLedPin = WIND_INFO_LED_PIN;
+    uint8_t electrolyserInfoLedPin = ELECTROLYSER_INFO_LED_PIN;
+    uint8_t hydrogenProductionInfoLedPin = HYDROGEN_PRODUCTION_INFO_LED_PIN;
+    uint8_t hydrogenStorageInfoLedPin = HYDROGEN_STORAGE_INFO_LED_PIN;
+    uint8_t hydrogenConsumptionInfoLedPin = HYDROGEN_CONSUMPTION_INFO_LED_PIN;
+    uint8_t electricityTransportInfoLedPin = ELECTRICITY_TRANSPORT_INFO_LED_PIN;
+    uint8_t streetInfoLedPin = STREET_INFO_LED_PIN;
 
     // Enable flags per segment/effect
     bool windEnabled = true;
@@ -241,11 +258,11 @@ struct SystemState {
     String electricityProductionName = "Electricity Production";
     String hydrogenProductionName = "Hydrogen Production";
     String hydrogenTransportName = "Hydrogen Transport";
-    String hydrogenStorage1Name = "Hydrogen Storage 1";
-    String hydrogenStorage2Name = "Hydrogen Storage 2";
-    String h2ConsumptionName = "Hydrogen Consumption";
+    String hydrogenStorage1Name = "Hydrogen Storage In";
+    String hydrogenStorage2Name = "Hydrogen Storage Out";
+    String h2ConsumptionName = "Fabrication Direct";
     String fabricationName = "Fabrication";
-    String electricityTransportName = "Electricity Transport";
+    String electricityTransportName = "Fabrication Storage";
     String storageTransportName = "Storage Transport";
     String storagePowerstationName = "Storage Powerstation";
 

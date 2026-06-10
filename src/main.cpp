@@ -9,6 +9,7 @@
 #include "effects/EffectUtils.h"
 #include "SystemState.h"
 #include "WebServerSafe.h"
+#include "soc/rtc_cntl_reg.h"
 
 // ========================== Global state ==========================
 // LED buffer moved into SystemState (state.leds)
@@ -31,15 +32,25 @@ void startProgramAuto();
 // ========================== Setup & Loop ==========================
 void setup() {
     Serial.begin(115200);
+    setCpuFrequencyMhz(DIAG_CPU_FREQ_MHZ);
+    // Load persisted settings first so hardware init uses the configured LED count
+    initWebServerSafe();
     hardwareInit(state);
-    // run a quick LED test (chase from 0..NUM_LEDS-1) so we can verify wiring
-    testAllLeds(state, 20);
     // allocate and initialize fadeEffect owned by the state
     state.fadeEffect = new fadeLeds(2000);
-    digitalWrite(BUTTON_LED_PIN, HIGH);
+    // Do not auto-start LED test mode on boot; this can trigger brownout on weak supplies.
+    state.testMode = false;
+    state.testSegmentStart = 0;
+    state.testSegmentEnd = state.totalLeds > 0 ? state.totalLeds - 1 : 0;
+    state.testSegmentIndex = -1;
+    state.testDirForward = true;
+    state.testEffectType = 0;
+    state.testColor = CRGB::White;
+    state.testDelay = 5;
+    state.testPhase = 0;
+    state.testPhaseStartTime = millis();
+    digitalWrite(state.buttonLedPin, HIGH);
     resetAllVariables();
-    // start the safe web UI which will load any persisted wind segment overrides
-    initWebServerSafe();
     // ensure runtime index uses the possibly overridden start and configured direction
     state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
 }
@@ -63,24 +74,81 @@ void loop() {
 // hardware initialization moved to src/Hardware.cpp (hardwareInit)
 
 void updateSegments() {
-    updateWindEffect(state, timers);
-    updateElectricityProductionEffect(state, timers);
-    updateElectrolyserEffect(state, timers);
-    updateHydrogenProductionEffect(state, timers);
-    updateHydrogenTransportEffect(state, timers);
-    updateHydrogenStorageEffect(state, timers);
-    updateH2ConsumptionEffect(state, timers);
-    updateFabricationEffect(state, timers);
-    updateElectricityEffect(state, timers);
-    updateStorageTransportEffect(state, timers);
-    updateCustomSegments(state, timers);
-    // Update the small information LEDs (status indicators)
+    // Strict simplified runtime: render only Wind and Solar using web-configured ranges and delays.
+    // Do not clear every frame; the running effect needs previous frame state for dim trailing.
+    if (!state.windOn && !state.solarOn) {
+        if (state.totalLeds > 0) {
+            fill_solid(state.leds, state.totalLeds, CRGB::Black);
+        }
+        updateInformationLEDs(state, timers);
+        return;
+    }
+
+    int prevWindIndex = state.windSegment;
+    bool prevWindFirstRun = state.firstRunWind;
+
+    if (state.windOn && state.windEnabled) {
+        state.windSegment = EffectUtils::runSegmentDir(
+            state,
+            state.windSegmentStart,
+            state.windSegmentEnd,
+            state.windColor,
+            CRGB(state.windColor.r / 10, state.windColor.g / 10, state.windColor.b / 10),
+            state.windDelay,
+            state.windSegment,
+            timers.previousMillisWind,
+            state.firstRunWind,
+            state.windDirForward
+        );
+
+        bool windReachedTerminal = !prevWindFirstRun &&
+            (prevWindIndex == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
+        if (windReachedTerminal && state.solarEnabled) {
+            state.solarOn = true;
+        }
+    } else {
+        state.firstRunWind = true;
+        state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
+    }
+
+    if (state.solarOn && state.solarEnabled) {
+        state.solarSegment = EffectUtils::runSegmentDir(
+            state,
+            state.solarSegmentStart,
+            state.solarSegmentEnd,
+            state.solarColor,
+            CRGB(state.solarColor.r / 10, state.solarColor.g / 10, state.solarColor.b / 10),
+            state.solarDelay,
+            state.solarSegment,
+            timers.previousMillisSolar,
+            state.firstRunSolar,
+            state.solarDirForward
+        );
+    } else {
+        state.firstRunSolar = true;
+        state.solarSegment = EffectUtils::initialIndex(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd);
+    }
+
+    // Disable all other chain states in this mode.
+    state.electricityProductionOn = false;
+    state.electrolyserOn = false;
+    state.hydrogenTransportOn = false;
+    state.hydrogenTransportDelayActive = false;
+    state.hydrogenProductionOn = false;
+    state.hydrogenStorageOn = false;
+    state.h2ConsumptionOn = false;
+    state.fabricationOn = false;
+    state.electricityTransportOn = false;
+    state.storageTransportOn = false;
+    state.storagePowerstationOn = false;
+    state.streetLightOn = false;
+
     updateInformationLEDs(state, timers);
 }
 
 void updateRelays() {
-    digitalWrite(WIND_TURBINE_RELAY_PIN, state.windOn ? HIGH : LOW);
-    digitalWrite(ELECTROLYSER_RELAY_PIN, state.electrolyserOn ? HIGH : LOW);
+    setRelayWind(state.windOn);
+    setRelayElectrolyser(state.electrolyserOn);
 }
 
 // Effect implementations are provided in src/effects/Effects.cpp
@@ -89,8 +157,10 @@ void checkButtonState() {
     uint32_t currentMillis = millis();
     // if general timer active handle timeouts
     if (state.generalTimerActive) {
-        if (currentMillis - timers.generalTimerStartTime >= WIND_TIME_MS && state.windOn) {
+        uint32_t windStopMs = static_cast<uint32_t>(state.windStopSeconds) * 1000UL;
+        if (currentMillis - timers.generalTimerStartTime >= windStopMs) {
             state.windOn = false;
+            state.solarOn = false;
         }
 
         if (currentMillis - timers.generalTimerStartTime >= RUN_TIME_MS) {
@@ -101,7 +171,7 @@ void checkButtonState() {
             state.emptyPipe = false;
             state.pipeEmpty = false;
             resetAllVariables();
-            digitalWrite(BUTTON_LED_PIN, HIGH);
+            digitalWrite(state.buttonLedPin, HIGH);
         }
         return;
     }
@@ -117,12 +187,16 @@ void checkButtonState() {
         static uint32_t lastPressTime = 0;
         const uint32_t debounceMs = 50;
 
-        if (digitalRead(BUTTON_PIN) == LOW && !state.buttonDisabled) {
+        if (digitalRead(state.buttonPin) == LOW && !state.buttonDisabled) {
             if (currentMillis - lastPressTime < debounceMs) return;
             lastPressTime = currentMillis;
 
-            digitalWrite(BUTTON_LED_PIN, LOW);
+            if (state.totalLeds > 0) {
+                fill_solid(state.leds, state.totalLeds, CRGB::Black);
+            }
+            digitalWrite(state.buttonLedPin, LOW);
             state.windOn = true;
+            state.solarOn = false;
             state.buttonDisabled = true;
             state.generalTimerActive = true;
             timers.generalTimerStartTime = currentMillis;
@@ -204,12 +278,16 @@ void resetAllVariables() {
 }
 
 void startProgramAuto() {
+    if (state.totalLeds > 0) {
+        fill_solid(state.leds, state.totalLeds, CRGB::Black);
+    }
     state.autoStartTriggered = true;
     state.buttonDisabled = true;
     state.generalTimerActive = true;
     timers.generalTimerStartTime = millis();
     state.windOn = true;
-    digitalWrite(BUTTON_LED_PIN, LOW);
+    state.solarOn = false;
+    digitalWrite(state.buttonLedPin, LOW);
 }
 
 void runTestMode() {
@@ -225,9 +303,9 @@ void runTestMode() {
         state.testPhaseStartTime = millis();
     }
 
-    // Phase 0: LED Check - run a simple white LED sequence for 5 seconds
+    // Phase 0: LED Check - run a simple white LED sequence for a short time
     if (state.testPhase == 0) {
-        if (millis() - state.testPhaseStartTime >= 5000) {
+        if (millis() - state.testPhaseStartTime >= 2000) {
             // Move to effect demo phase
             state.testPhase = 1;
             state.testPhaseStartTime = millis();

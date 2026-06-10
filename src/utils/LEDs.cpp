@@ -3,21 +3,23 @@
 #include "../../include/SystemState.h"
 
 void setPixelSafe(SystemState &state, int idx, const CRGB &col) {
-    if ((unsigned)idx < (unsigned)NUM_LEDS) state.leds[idx] = col;
+    if ((idx >= 0) && (idx < state.totalLeds)) state.leds[idx] = col;
 }
 
 void clearSegment(SystemState &state, int start, int end) {
     if (start < 0) start = 0;
-    if (end >= NUM_LEDS) end = NUM_LEDS - 1;
+    if (end >= state.totalLeds) end = state.totalLeds - 1;
+    if (start >= state.totalLeds) return;
     for (int i = start; i <= end; ++i) state.leds[i] = CRGB::Black;
 }
 
 void testAllLeds(SystemState &state, uint16_t delayMs) {
+    if (state.totalLeds == 0) return;
     // Clear first
-    fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+    fill_solid(state.leds, state.totalLeds, CRGB::Black);
     FastLED.show();
 
-    for (int i = 0; i < NUM_LEDS; ++i) {
+    for (int i = 0; i < state.totalLeds; ++i) {
         // light current LED
         state.leds[i] = CRGB::White;
         FastLED.show();
@@ -27,6 +29,6 @@ void testAllLeds(SystemState &state, uint16_t delayMs) {
     }
 
     // ensure clean state after test
-    fill_solid(state.leds, NUM_LEDS, CRGB::Black);
+    fill_solid(state.leds, state.totalLeds, CRGB::Black);
     FastLED.show();
 }

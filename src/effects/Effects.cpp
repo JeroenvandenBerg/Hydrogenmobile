@@ -56,9 +56,14 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.windSegment = EffectUtils::initialIndex(state.windDirForward, state.windSegmentStart, state.windSegmentEnd);
         }
 
-        // Solar segment  
-        bool solarTriggerActive = EffectUtils::isTriggerActive(state, state.solarTrigger);
-        if (solarTriggerActive && state.solarEnabled) {
+        bool windReachedTerminal = state.windEnabled && !prevWindFirstRun &&
+            (prevWindIndex == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
+        if (windReachedTerminal && state.solarEnabled) {
+            state.solarOn = true;
+        }
+
+        // Solar starts only after wind reaches its terminal bound.
+        if (state.solarOn && state.solarEnabled) {
             if (state.solarEffectType == 1) {
                 fireEffect(state.leds, state.solarSegmentStart, state.solarSegmentEnd);
                 EffectUtils::advanceIndexDir(state.solarDelay,
@@ -92,15 +97,18 @@ void updateWindEffect(SystemState &state, Timers &timers) {
             state.solarSegment = EffectUtils::initialIndex(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd);
         }
 
-        // Trigger electricity production if enabled and if at least one enabled source has reached terminal
-        bool windReachedTerminal = state.windEnabled && !prevWindFirstRun &&
-            (prevWindIndex == EffectUtils::terminalBound(state.windDirForward, state.windSegmentStart, state.windSegmentEnd));
-        bool solarReachedTerminal = state.solarEnabled && !prevSolarFirstRun &&
-            (prevSolarIndex == EffectUtils::terminalBound(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd));
-        
-        if (state.electricityProductionEnabled && (windReachedTerminal || solarReachedTerminal)) {
-            state.electricityProductionOn = true;
-        }
+        // In the simplified flow we stop at Solar: no downstream segments are started.
+        state.electricityProductionOn = false;
+        state.electrolyserOn = false;
+        state.hydrogenTransportOn = false;
+        state.hydrogenTransportDelayActive = false;
+        state.hydrogenProductionOn = false;
+        state.hydrogenStorageOn = false;
+        state.h2ConsumptionOn = false;
+        state.fabricationOn = false;
+        state.electricityTransportOn = false;
+        state.storageTransportOn = false;
+        state.storagePowerstationOn = false;
     } else {
         EffectUtils::clearRange(state, state.windSegmentStart, state.windSegmentEnd);
         state.firstRunWind = true;
@@ -109,7 +117,18 @@ void updateWindEffect(SystemState &state, Timers &timers) {
         EffectUtils::clearRange(state, state.solarSegmentStart, state.solarSegmentEnd);
         state.firstRunSolar = true;
         state.solarSegment = EffectUtils::initialIndex(state.solarDirForward, state.solarSegmentStart, state.solarSegmentEnd);
+        state.solarOn = false;
         state.electricityProductionOn = false;
+        state.electrolyserOn = false;
+        state.hydrogenTransportOn = false;
+        state.hydrogenTransportDelayActive = false;
+        state.hydrogenProductionOn = false;
+        state.hydrogenStorageOn = false;
+        state.h2ConsumptionOn = false;
+        state.fabricationOn = false;
+        state.electricityTransportOn = false;
+        state.storageTransportOn = false;
+        state.storagePowerstationOn = false;
     }
 }
 
@@ -187,6 +206,7 @@ void updateElectrolyserEffect(SystemState &state, Timers &timers) {
     if (!state.electrolyserOn) {
         state.hydrogenTransportOn = false;
         state.hydrogenTransportDelayActive = false;
+        state.electricityProductionOn = false;
         return;
     }
 
@@ -194,11 +214,15 @@ void updateElectrolyserEffect(SystemState &state, Timers &timers) {
         uint32_t elapsed = millis() - timers.previousMillisElectrolyser;
         uint32_t required = static_cast<uint32_t>(state.hydrogenTransportDelaySeconds) * 1000UL;
         if (elapsed >= required) {
-            state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+            state.hydrogenTransportOn = false;
+            state.hydrogenStorageOn = state.hydrogenStorageEnabled;
+            state.h2ConsumptionOn = state.h2ConsumptionEnabled;
             state.hydrogenTransportDelayActive = false;
         }
     } else {
-        state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+        state.hydrogenTransportOn = false;
+        state.hydrogenStorageOn = state.hydrogenStorageEnabled;
+        state.h2ConsumptionOn = state.h2ConsumptionEnabled;
     }
 }
 
@@ -272,7 +296,9 @@ void updateHydrogenTransportEffect(SystemState &state, Timers &timers) {
             );
         }
 
-        if (state.hydrogenTransportSegment == HYDROGEN_TRANSPORT_LED_MID) {
+        int hydrogenTransportMid = state.hydrogenTransportSegmentStart +
+            ((state.hydrogenTransportSegmentEnd - state.hydrogenTransportSegmentStart) / 2);
+        if (state.hydrogenTransportSegment == hydrogenTransportMid) {
             if (state.h2ConsumptionEnabled) {
                 state.h2ConsumptionOn = true;
             }
@@ -469,12 +495,6 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
                 );
             }
         }
-        if (state.hydrogenStorageSegment1 == EffectUtils::initialIndex(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd) ||
-            state.hydrogenStorageSegment2 == EffectUtils::initialIndex(state.hydrogenStorage2DirForward, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd)) {
-            if (state.storageTransportEnabled) {
-                state.storageTransportOn = true;
-            }
-        }
     } else {
         EffectUtils::clearRange(state, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
         EffectUtils::clearRange(state, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
@@ -482,7 +502,6 @@ void updateHydrogenStorageEffect(SystemState &state, Timers &timers) {
         state.firstRunHydrogenStorage2 = true;
         state.hydrogenStorageSegment1 = EffectUtils::initialIndex(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
         state.hydrogenStorageSegment2 = EffectUtils::initialIndex(state.hydrogenStorage2DirForward, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
-        state.storageTransportOn = false;
         state.storageTimerStarted = false;
     }
 }
@@ -524,19 +543,10 @@ void updateH2ConsumptionEffect(SystemState &state, Timers &timers) {
             }
         }
     } else {
-        bool storageTransportTriggerActive = EffectUtils::isTriggerActive(state, state.storageTransportTrigger);
-        if (storageTransportTriggerActive && state.storageTransportEnabled) {
-            if (state.storageTransportSegment == state.storageTransportSegmentEnd) {
-            if (state.fabricationEnabled) {
-                state.fabricationOn = true;
-            }
-        }
-    } else {
         EffectUtils::clearRange(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
         state.firstRunH2Consumption = true;
         state.h2ConsumptionSegment = EffectUtils::initialIndex(state.h2ConsumptionDirForward, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
         state.fabricationOn = false;
-    }
     }
 }
 
@@ -690,14 +700,14 @@ void updateElectricityEffect(SystemState &state, Timers &timers) {
         }
 
         if (state.electricityTransportSegment == EffectUtils::terminalBound(state.electricityTransportDirForward, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd)) {
-            digitalWrite(STREET_LED_PIN, HIGH);
+            digitalWrite(state.streetLedPin, HIGH);
             state.streetLightOn = true;
         }
     } else {
         EffectUtils::clearRange(state, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
         state.firstRunElectricityTransport = true;
         state.electricityTransportSegment = EffectUtils::initialIndex(state.electricityTransportDirForward, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
-        digitalWrite(STREET_LED_PIN, LOW);
+        digitalWrite(state.streetLedPin, LOW);
         state.streetLightOn = false;
     }
 }
@@ -745,11 +755,11 @@ void updateCustomSegments(SystemState &state, Timers &timers) {
 
 // ---- Information LEDs (now on separate digital pins)
 void updateInformationLEDs(SystemState &state, Timers &timers) {
-    digitalWrite(WIND_INFO_LED_PIN, state.windOn ? HIGH : LOW);
-    digitalWrite(HYDROGEN_PRODUCTION_INFO_LED_PIN, state.hydrogenProductionOn ? HIGH : LOW);
-    digitalWrite(ELECTROLYSER_INFO_LED_PIN, state.electrolyserOn ? HIGH : LOW);
-    digitalWrite(HYDROGEN_STORAGE_INFO_LED_PIN, state.hydrogenStorageOn ? HIGH : LOW);
-    digitalWrite(HYDROGEN_CONSUMPTION_INFO_LED_PIN, state.h2ConsumptionOn ? HIGH : LOW);
-    digitalWrite(ELECTRICITY_TRANSPORT_INFO_LED_PIN, state.electricityTransportOn ? HIGH : LOW);
-    digitalWrite(STREET_INFO_LED_PIN, state.streetLightOn ? HIGH : LOW);
+    digitalWrite(state.windInfoLedPin, state.windOn ? HIGH : LOW);
+    digitalWrite(state.hydrogenProductionInfoLedPin, state.hydrogenProductionOn ? HIGH : LOW);
+    digitalWrite(state.electrolyserInfoLedPin, state.electrolyserOn ? HIGH : LOW);
+    digitalWrite(state.hydrogenStorageInfoLedPin, state.hydrogenStorageOn ? HIGH : LOW);
+    digitalWrite(state.hydrogenConsumptionInfoLedPin, state.h2ConsumptionOn ? HIGH : LOW);
+    digitalWrite(state.electricityTransportInfoLedPin, state.electricityTransportOn ? HIGH : LOW);
+    digitalWrite(state.streetInfoLedPin, state.streetLightOn ? HIGH : LOW);
 }

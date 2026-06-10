@@ -4,7 +4,8 @@
 #include <FastLED.h>
 
 // LED Strip Configuration
-#define NUM_LEDS 110
+#define NUM_LEDS 1000
+#define DEFAULT_LED_COUNT NUM_LEDS
 #define DATA_PIN 4
 #define COLOR_ORDER GRB
 
@@ -78,9 +79,13 @@
 #define ELECTROLYSER_RELAY_PIN 13
 
 // General timers
-#define WIND_TIME_MS 42000U
+#define WIND_TIME_MS 20000U
 #define RUN_TIME_MS 90000U
 #define HYDROGEN_PRODUCTION_DELAY_MS 3000U
 #define HYDROGEN_STORAGE_DELAY_MS 3000U
+
+// Production settings.
+#define DIAG_DISABLE_BROWNOUT 0
+#define DIAG_CPU_FREQ_MHZ 240
 
 #endif
