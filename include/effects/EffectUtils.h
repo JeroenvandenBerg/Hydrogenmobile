@@ -120,7 +120,7 @@ inline bool isTriggerActive(const SystemState &state, TriggerType trigger) {
         case TriggerType::HYDROGEN_TRANSPORT:
             return state.hydrogenTransportOn;
         case TriggerType::HYDROGEN_STORAGE:
-            return state.hydrogenStorageOn;
+            return state.hydrogenStorageInOn || state.hydrogenStorageOutOn;
         case TriggerType::H2_CONSUMPTION:
             return state.h2ConsumptionOn;
         case TriggerType::FABRICATION:

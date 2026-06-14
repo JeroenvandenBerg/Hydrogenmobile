@@ -24,6 +24,11 @@ enum class TriggerType : uint8_t {
     STORAGE_POWERSTATION = 11 // Activated by storagePowerstationOn
 };
 
+enum class ProgramVariant : uint8_t {
+    HYDROGEN_FROM_RENEWABLES = 0,
+    HYDROGEN_FROM_STORAGE = 1,
+};
+
 struct Timers {
     uint32_t previousButtonCheckMillis = 0;
     uint32_t buttonDisableStartTime = 0;
@@ -43,6 +48,8 @@ struct Timers {
     uint32_t previousMillisStorageTransport = 0;
     uint32_t previousMillisStoragePowerstation = 0;
     uint32_t hydrogenStorageFullTimer = 0;
+    uint32_t storageProgramStartTime = 0;
+    uint32_t restartDelayStartTime = 0;
 };
 
 // forward-declare fadeLeds (global scope) so we can keep a pointer here
@@ -62,6 +69,8 @@ struct SystemState {
     bool hydrogenTransportOn = false;
     bool hydrogenTransportDelayActive = false;
     bool hydrogenProductionOn = false;
+    bool hydrogenStorageInOn = false;
+    bool hydrogenStorageOutOn = false;
     bool hydrogenStorageOn = false;
     bool hydrogenStorageFull = false;
     bool h2ConsumptionOn = false;
@@ -87,8 +96,17 @@ struct SystemState {
 
     bool autoStartEnabled = false;
     bool autoStartTriggered = false;
+    ProgramVariant activeProgram = ProgramVariant::HYDROGEN_FROM_RENEWABLES;
+    bool relayManualMode = false;
+    bool manualWindRelayOn = false;
+    bool manualElectrolyserRelayOn = false;
+    bool windRelayOutputOn = false;
+    bool electrolyserRelayOutputOn = false;
+    bool restartDelayActive = false;
     uint16_t windStopSeconds = static_cast<uint16_t>(WIND_TIME_MS / 1000U); // Stop wind/solar after this runtime
     uint16_t hydrogenTransportDelaySeconds = 15; // Delay between electrolyser and hydrogen transport (seconds)
+    uint16_t storageRunSeconds = static_cast<uint16_t>(RUN_TIME_MS / 1000U); // How long hydrogen-from-storage runs before switching back
+    uint16_t restartDelaySeconds = 0; // Wait time between storage end and next renewables cycle
     uint16_t totalLeds = DEFAULT_LED_COUNT;      // Active LED count; can be lowered via web UI
 
     // Runtime-configurable IO pins
@@ -261,7 +279,7 @@ struct SystemState {
     String hydrogenStorage1Name = "Hydrogen Storage In";
     String hydrogenStorage2Name = "Hydrogen Storage Out";
     String h2ConsumptionName = "Fabrication Direct";
-    String fabricationName = "Fabrication";
+    String fabricationName = "Fabrication Fire";
     String electricityTransportName = "Fabrication Storage";
     String storageTransportName = "Storage Transport";
     String storagePowerstationName = "Storage Powerstation";

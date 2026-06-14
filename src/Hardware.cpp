@@ -92,6 +92,8 @@ void applyPinConfiguration(SystemState &state) {
     pinMode(state.electrolyserRelayPin, OUTPUT);
     digitalWrite(state.windRelayPin, LOW);
     digitalWrite(state.electrolyserRelayPin, LOW);
+    state.windRelayOutputOn = false;
+    state.electrolyserRelayOutputOn = false;
 
     // Initialize info LED pins
     pinMode(state.windInfoLedPin, OUTPUT);
@@ -134,6 +136,12 @@ void applyLedCount(SystemState &state) {
     FastLED.show();
 }
 
-void setRelayWind(bool on) { digitalWrite(state.windRelayPin, on ? HIGH : LOW); }
-void setRelayElectrolyser(bool on) { digitalWrite(state.electrolyserRelayPin, on ? HIGH : LOW); }
+void setRelayWind(bool on) {
+    digitalWrite(state.windRelayPin, on ? HIGH : LOW);
+    state.windRelayOutputOn = on;
+}
+void setRelayElectrolyser(bool on) {
+    digitalWrite(state.electrolyserRelayPin, on ? HIGH : LOW);
+    state.electrolyserRelayOutputOn = on;
+}
 bool readButton() { return digitalRead(state.buttonPin) == LOW; } // active low

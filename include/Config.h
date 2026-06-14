@@ -84,7 +84,7 @@
 #define HYDROGEN_PRODUCTION_DELAY_MS 3000U
 #define HYDROGEN_STORAGE_DELAY_MS 3000U
 
-// Production settings.
+// Test-board diagnostics. Set to 0/240 for production ESP.
 #define DIAG_DISABLE_BROWNOUT 0
 #define DIAG_CPU_FREQ_MHZ 240
 

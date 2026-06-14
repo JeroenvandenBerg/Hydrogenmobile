@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <FastLED.h>
 #include <nvs_flash.h>
+#include <nvs.h>
 #include "../include/logo_data_uri.h"
 #include "../include/effects/EffectUtils.h"
 
@@ -19,9 +20,420 @@ extern Timers timers;
 static AsyncWebServer server(80);
 static Preferences prefs;
 static Preferences programPrefs;
+static constexpr const char* LED_CONFIG_NAMESPACE = "led-config";
+static constexpr const char* PROGRAM_NAMESPACE = "program";
 static constexpr const char* H2_DELAY_KEY = "h2_td_s";
 static constexpr const char* H2_DELAY_KEY_LEGACY = "h2_trans_delay_s";
 static constexpr const char* WIND_STOP_KEY = "w_stop_s";
+static constexpr const char* STORAGE_RUN_KEY = "st_run_s";
+static constexpr const char* RESTART_DELAY_KEY = "rst_dly_s";
+static constexpr const char* ELECTROLYSER_RELAY_PIN_KEY = "ely_rel_pin"; // NVS keys must be <= 15 chars
+
+static Preferences* resolveGlobalPrefsHandle(const char* ns) {
+    if (ns == nullptr) return nullptr;
+    if (strcmp(ns, LED_CONFIG_NAMESPACE) == 0) return &prefs;
+    if (strcmp(ns, PROGRAM_NAMESPACE) == 0) return &programPrefs;
+    return nullptr;
+}
+
+static bool reopenGlobalPreferences() {
+    prefs.end();
+    programPrefs.end();
+    bool prefsOk = prefs.begin(LED_CONFIG_NAMESPACE, false);
+    bool programPrefsOk = programPrefs.begin(PROGRAM_NAMESPACE, false);
+    Serial.printf("Preferences reopen after NVS recovery: led-config=%d, program=%d\n", prefsOk ? 1 : 0, programPrefsOk ? 1 : 0);
+    return prefsOk && programPrefsOk;
+}
+
+static bool probeHandleWritable(Preferences& p, const char* probeKey) {
+    if (probeKey == nullptr || probeKey[0] == '\0') {
+        return false;
+    }
+    uint8_t marker = static_cast<uint8_t>(millis() & 0xFF);
+    size_t wrote = p.putUChar(probeKey, marker);
+    uint8_t readBack = p.getUChar(probeKey, static_cast<uint8_t>(marker ^ 0xFF));
+    return wrote == sizeof(uint8_t) && readBack == marker;
+}
+
+static bool reinitializeNvsAtBoot(bool erasePartition) {
+    prefs.end();
+    programPrefs.end();
+    nvs_flash_deinit();
+
+    if (erasePartition) {
+        esp_err_t eraseErr = nvs_flash_erase();
+        if (eraseErr != ESP_OK) {
+            Serial.printf("NVS erase failed: %d\n", static_cast<int>(eraseErr));
+            return false;
+        }
+    }
+
+    esp_err_t initErr = nvs_flash_init();
+    if (initErr == ESP_ERR_NVS_NO_FREE_PAGES || initErr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        if (nvs_flash_erase() != ESP_OK) return false;
+        initErr = nvs_flash_init();
+    }
+    if (initErr != ESP_OK) {
+        Serial.printf("NVS reinit failed: %d\n", static_cast<int>(initErr));
+        return false;
+    }
+
+    return reopenGlobalPreferences();
+}
+
+static bool _nvsRecoveryAttempted = false;
+
+static void resetNvsRecoveryFlag() {
+    _nvsRecoveryAttempted = false;
+}
+
+static bool tryFullNvsRecoveryOnce() {
+    if (_nvsRecoveryAttempted) {
+        return false;
+    }
+    _nvsRecoveryAttempted = true;
+
+    Serial.println("Attempting NVS recovery (reinit only, no erase)...");
+
+    prefs.end();
+    programPrefs.end();
+    nvs_flash_deinit();
+    esp_err_t initErr = nvs_flash_init();
+    if (initErr != ESP_OK) {
+        Serial.printf("NVS reinit failed: %d\n", static_cast<int>(initErr));
+        nvs_flash_init(); // best effort
+        reopenGlobalPreferences();
+        return false;
+    }
+    if (!reopenGlobalPreferences()) {
+        Serial.println("NVS recovery: reopen failed");
+        return false;
+    }
+
+    Serial.println("NVS recovery (reinit) succeeded; retrying write");
+    return true;
+}
+
+static bool forceEraseNvsKey(const char* ns, const char* key) {
+    if (ns == nullptr || key == nullptr || key[0] == '\0') {
+        return false;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t openErr = nvs_open(ns, NVS_READWRITE, &handle);
+    if (openErr != ESP_OK) {
+        Serial.printf("forceErase: nvs_open failed: %d\n", (int)openErr);
+        return false;
+    }
+
+    esp_err_t eraseErr = nvs_erase_key(handle, key);
+    Serial.printf("forceErase: nvs_erase_key(%s, %s) = %d\n", ns, key, (int)eraseErr);
+    
+    // If erase is INVALID_STATE (4354), we need full NVS recovery - key is permanently broken
+    if (eraseErr == ESP_ERR_NVS_INVALID_STATE) {
+        Serial.println("forceErase: Key is INVALID_STATE - cannot erase, full NVS recovery needed");
+        nvs_close(handle);
+        return false;  // Signal that we need tryFullNvsRecoveryOnce()
+    }
+    
+    if (eraseErr != ESP_OK && eraseErr != ESP_ERR_NVS_NOT_FOUND) {
+        Serial.printf("forceErase: nvs_erase_key failed with unexpected error: %d\n", (int)eraseErr);
+        nvs_close(handle);
+        return false;
+    }
+
+    esp_err_t commitErr = nvs_commit(handle);
+    Serial.printf("forceErase: nvs_commit = %d\n", (int)commitErr);
+    nvs_close(handle);
+    if (commitErr != ESP_OK) {
+        Serial.printf("forceErase: nvs_commit failed: %d\n", (int)commitErr);
+        return false;
+    }
+
+    reopenGlobalPreferences();
+    Serial.println("forceErase: key erased and global prefs reopened");
+    return true;
+}
+
+static bool putUIntRaw(const char* ns, const char* key, uint32_t value) {
+    if (Preferences* gp = resolveGlobalPrefsHandle(ns)) {
+        if (gp->isKey(key) && gp->getUInt(key, value ^ 0xA5A5A5A5UL) == value) {
+            return true;
+        }
+        size_t wrote = gp->putUInt(key, value);
+        if (wrote == sizeof(uint32_t) && gp->getUInt(key, value ^ 0xA5A5A5A5UL) == value) {
+            return true;
+        }
+        if (gp->isKey(key)) {
+            gp->remove(key);
+            wrote = gp->putUInt(key, value);
+            if (wrote == sizeof(uint32_t) && gp->getUInt(key, value ^ 0xA5A5A5A5UL) == value) {
+                return true;
+            }
+        }
+        // Fall back to isolated handle path below.
+    }
+
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+        return false;
+    }
+    if (p.isKey(key) && p.getUInt(key, value ^ 0xA5A5A5A5UL) == value) {
+        p.end();
+        return true;
+    }
+    size_t wrote = p.putUInt(key, value);
+    uint32_t readBack = p.getUInt(key, value ^ 0xA5A5A5A5UL);
+    if (wrote != sizeof(uint32_t) || readBack != value) {
+        if (p.isKey(key)) {
+            p.remove(key);
+            wrote = p.putUInt(key, value);
+            readBack = p.getUInt(key, value ^ 0xA5A5A5A5UL);
+        }
+    }
+    p.end();
+    return wrote == sizeof(uint32_t) && readBack == value;
+}
+
+static bool putIntRaw(const char* ns, const char* key, int32_t value) {
+    if (Preferences* gp = resolveGlobalPrefsHandle(ns)) {
+        if (gp->isKey(key) && gp->getInt(key, value ^ 0x5A5A5A5A) == value) {
+            return true;
+        }
+        size_t wrote = gp->putInt(key, value);
+        if (wrote == sizeof(int32_t) && gp->getInt(key, value ^ 0x5A5A5A5A) == value) {
+            return true;
+        }
+        if (gp->isKey(key)) {
+            gp->remove(key);
+            wrote = gp->putInt(key, value);
+            if (wrote == sizeof(int32_t) && gp->getInt(key, value ^ 0x5A5A5A5A) == value) {
+                return true;
+            }
+        }
+        // Fall back to isolated handle path below.
+    }
+
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+        return false;
+    }
+    if (p.isKey(key) && p.getInt(key, value ^ 0x5A5A5A5A) == value) {
+        p.end();
+        return true;
+    }
+    size_t wrote = p.putInt(key, value);
+    int32_t readBack = p.getInt(key, value ^ 0x5A5A5A5A);
+    if (wrote != sizeof(int32_t) || readBack != value) {
+        if (p.isKey(key)) {
+            p.remove(key);
+            wrote = p.putInt(key, value);
+            readBack = p.getInt(key, value ^ 0x5A5A5A5A);
+        }
+    }
+    p.end();
+    return wrote == sizeof(int32_t) && readBack == value;
+}
+
+static bool putStringRaw(const char* ns, const char* key, const String& value) {
+    if (Preferences* gp = resolveGlobalPrefsHandle(ns)) {
+        if (gp->isKey(key) && gp->getString(key, "") == value) {
+            return true;
+        }
+        size_t wrote = gp->putString(key, value);
+        if (wrote == value.length() && gp->getString(key, "") == value) {
+            return true;
+        }
+        if (gp->isKey(key)) {
+            gp->remove(key);
+            wrote = gp->putString(key, value);
+            if (wrote == value.length() && gp->getString(key, "") == value) {
+                return true;
+            }
+        }
+        // Fall back to isolated handle path below.
+    }
+
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+        return false;
+    }
+    if (p.isKey(key) && p.getString(key, "") == value) {
+        p.end();
+        return true;
+    }
+    size_t wrote = p.putString(key, value);
+    String readBack = p.getString(key, "");
+    if (wrote != value.length() || readBack != value) {
+        if (p.isKey(key)) {
+            p.remove(key);
+            wrote = p.putString(key, value);
+            readBack = p.getString(key, "");
+        }
+    }
+    p.end();
+    return wrote == value.length() && readBack == value;
+}
+
+static bool putBoolRaw(const char* ns, const char* key, bool value) {
+    if (Preferences* gp = resolveGlobalPrefsHandle(ns)) {
+        if (gp->isKey(key) && gp->getBool(key, !value) == value) {
+            return true;
+        }
+        size_t wrote = gp->putBool(key, value);
+        if (wrote == sizeof(uint8_t) && gp->getBool(key, !value) == value) {
+            return true;
+        }
+        if (gp->isKey(key)) {
+            gp->remove(key);
+            wrote = gp->putBool(key, value);
+            if (wrote == sizeof(uint8_t) && gp->getBool(key, !value) == value) {
+                return true;
+            }
+        }
+        // Fall back to isolated handle path below.
+    }
+
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+        return false;
+    }
+    if (p.isKey(key) && p.getBool(key, !value) == value) {
+        p.end();
+        return true;
+    }
+    size_t wrote = p.putBool(key, value);
+    bool readBack = p.getBool(key, !value);
+    if (wrote != sizeof(uint8_t) || readBack != value) {
+        if (p.isKey(key)) {
+            p.remove(key);
+            wrote = p.putBool(key, value);
+            readBack = p.getBool(key, !value);
+        }
+    }
+    p.end();
+    return wrote == sizeof(uint8_t) && readBack == value;
+}
+
+static bool putUIntRobust(const char* ns, const char* key, uint32_t value) {
+    if (putUIntRaw(ns, key, value)) return true;
+
+    Serial.printf("putUInt first attempt failed: ns=%s key=%s\n", ns, key);
+    if (reopenGlobalPreferences() && putUIntRaw(ns, key, value)) return true;
+
+    if (forceEraseNvsKey(ns, key) && putUIntRaw(ns, key, value)) return true;
+
+    // Try isolated handle before full recovery
+    Serial.printf("putUInt: final retry after failed erase - opening isolated handle for %s/%s\n", ns, key);
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+    } else {
+        if (p.isKey(key)) {
+            p.remove(key);
+        }
+        size_t wrote = p.putUInt(key, value);
+        uint32_t readBack = p.getUInt(key, value ^ 0xA5A5A5A5UL);
+        p.end();
+        if (wrote == sizeof(uint32_t) && readBack == value) {
+            Serial.printf("putUInt: isolated handle retry succeeded for %s\n", key);
+            reopenGlobalPreferences();
+            return true;
+        }
+    }
+
+    if (tryFullNvsRecoveryOnce() && putUIntRaw(ns, key, value)) return true;
+
+    Serial.printf("putUInt failed after all retries: ns=%s key=%s\n", ns, key);
+    return false;
+}
+
+static bool putIntRobust(const char* ns, const char* key, int32_t value) {
+    if (putIntRaw(ns, key, value)) return true;
+
+    Serial.printf("putInt first attempt failed: ns=%s key=%s\n", ns, key);
+    if (reopenGlobalPreferences() && putIntRaw(ns, key, value)) return true;
+
+    if (forceEraseNvsKey(ns, key) && putIntRaw(ns, key, value)) return true;
+
+    // If forceErase returned false because of INVALID_STATE, that means full recovery is needed
+    // But recovery with nvs_flash_init() will wipe all other settings
+    // Try one more time with a fresh isolated handle after erase attempt
+    Serial.printf("putInt: final retry after failed erase - opening isolated handle for %s/%s\n", ns, key);
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+    } else {
+        if (p.isKey(key)) {
+            p.remove(key);  // Try to forcefully remove the key one more time
+        }
+        size_t wrote = p.putInt(key, value);
+        int32_t readBack = p.getInt(key, value ^ 0x5A5A5A5A);
+        p.end();
+        if (wrote == sizeof(int32_t) && readBack == value) {
+            Serial.printf("putInt: isolated handle retry succeeded for %s\n", key);
+            reopenGlobalPreferences();  // Reopen global after isolated write
+            return true;
+        }
+    }
+
+    // Only as last resort, do full recovery WITH erase to clean up INVALID_STATE keys
+    if (tryFullNvsRecoveryOnce() && putIntRaw(ns, key, value)) return true;
+
+    Serial.printf("putInt failed after all retries: ns=%s key=%s\n", ns, key);
+    return false;
+}
+
+static bool putStringRobust(const char* ns, const char* key, const String& value) {
+    if (putStringRaw(ns, key, value)) return true;
+
+    Serial.printf("putString first attempt failed: ns=%s key=%s\n", ns, key);
+    if (reopenGlobalPreferences() && putStringRaw(ns, key, value)) return true;
+
+    if (forceEraseNvsKey(ns, key) && putStringRaw(ns, key, value)) return true;
+
+    if (tryFullNvsRecoveryOnce() && putStringRaw(ns, key, value)) return true;
+
+    Serial.printf("putString failed after reopen retry: ns=%s key=%s\n", ns, key);
+    return false;
+}
+
+static bool putBoolRobust(const char* ns, const char* key, bool value) {
+    if (putBoolRaw(ns, key, value)) return true;
+
+    Serial.printf("putBool first attempt failed: ns=%s key=%s\n", ns, key);
+    if (reopenGlobalPreferences() && putBoolRaw(ns, key, value)) return true;
+
+    if (forceEraseNvsKey(ns, key) && putBoolRaw(ns, key, value)) return true;
+
+    // Try isolated handle before full recovery
+    Serial.printf("putBool: final retry after failed erase - opening isolated handle for %s/%s\n", ns, key);
+    Preferences p;
+    if (!p.begin(ns, false)) {
+        p.end();
+    } else {
+        if (p.isKey(key)) {
+            p.remove(key);
+        }
+        size_t wrote = p.putBool(key, value);
+        bool readBack = p.getBool(key, !value);
+        p.end();
+        if (wrote == sizeof(uint8_t) && readBack == value) {
+            Serial.printf("putBool: isolated handle retry succeeded for %s\n", key);
+            reopenGlobalPreferences();
+            return true;
+        }
+    }
+
+    if (tryFullNvsRecoveryOnce() && putBoolRaw(ns, key, value)) return true;
+
+    Serial.printf("putBool failed after all retries: ns=%s key=%s\n", ns, key);
+    return false;
+}
 
 static bool isSafeOutputGpio(uint8_t pin) {
     switch (pin) {
@@ -53,7 +465,8 @@ void initWebServerSafe() {
     delay(50);
     WiFi.setTxPower(WIFI_POWER_2dBm);
 
-    bool apStarted = WiFi.softAP("HydrogenDemo", "12345678", 1, false, 1);
+    // Allow multiple concurrent browser connections (HTML + JS fetches + retries).
+    bool apStarted = WiFi.softAP("HydrogenDemo", "12345678", 1, false, 4);
     if (!apStarted) {
         Serial.println("SoftAP start failed, retrying with default channel...");
         apStarted = WiFi.softAP("HydrogenDemo", "12345678");
@@ -72,6 +485,11 @@ void initWebServerSafe() {
 
     // Ensure NVS is initialized and recover automatically from stale/full state.
     esp_err_t nvsInitErr = nvs_flash_init();
+    if (nvsInitErr == ESP_ERR_NVS_INVALID_STATE) {
+        Serial.println("NVS init returned INVALID_STATE, trying deinit/init...");
+        nvs_flash_deinit();
+        nvsInitErr = nvs_flash_init();
+    }
     if (nvsInitErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsInitErr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         Serial.println("NVS invalid/full, erasing NVS partition...");
         nvs_flash_erase();
@@ -82,10 +500,26 @@ void initWebServerSafe() {
     }
 
     // Open preferences namespaces and log if any namespace failed to open.
-    bool prefsOk = prefs.begin("led-config", false);
-    bool programPrefsOk = programPrefs.begin("program", false);
+    bool prefsOk = prefs.begin(LED_CONFIG_NAMESPACE, false);
+    bool programPrefsOk = programPrefs.begin(PROGRAM_NAMESPACE, false);
     if (!prefsOk || !programPrefsOk) {
         Serial.printf("Preferences open failed: led-config=%d, program=%d\n", prefsOk ? 1 : 0, programPrefsOk ? 1 : 0);
+        // Retry once in case namespace handles are stale after NVS recovery.
+        prefs.end();
+        programPrefs.end();
+        prefsOk = prefs.begin(LED_CONFIG_NAMESPACE, false);
+        programPrefsOk = programPrefs.begin(PROGRAM_NAMESPACE, false);
+        Serial.printf("Preferences reopen: led-config=%d, program=%d\n", prefsOk ? 1 : 0, programPrefsOk ? 1 : 0);
+    }
+
+    bool nvsWritable = prefsOk && programPrefsOk;
+    if (nvsWritable) {
+        bool probeOk = probeHandleWritable(prefs, "wr_led") && probeHandleWritable(programPrefs, "wr_prog");
+        if (!probeOk) {
+            // Probe is advisory only. Avoid destructive erase at boot; recover lazily on first real write failure.
+            Serial.println("NVS write probe failed at boot; skipping boot-time writes and deferring recovery to save operations");
+            nvsWritable = false;
+        }
     }
 
     uint32_t storedLedCount = programPrefs.getUInt("total_leds", state.totalLeds);
@@ -107,17 +541,23 @@ void initWebServerSafe() {
     // Migrate program-level settings from legacy keys if needed
     if (!programPrefs.isKey("auto_start") && prefs.isKey("auto_start_enabled")) {
         bool legacyAuto = prefs.getBool("auto_start_enabled", false);
-        programPrefs.putBool("auto_start", legacyAuto);
+        if (nvsWritable) {
+            putBoolRobust(PROGRAM_NAMESPACE, "auto_start", legacyAuto);
+        }
     }
     if (!programPrefs.isKey(H2_DELAY_KEY) && prefs.isKey(H2_DELAY_KEY_LEGACY)) {
         uint32_t legacyDelay = prefs.getUInt(H2_DELAY_KEY_LEGACY, state.hydrogenTransportDelaySeconds);
         if (legacyDelay > 600) legacyDelay = 600;
-        programPrefs.putUInt(H2_DELAY_KEY, legacyDelay);
+        if (nvsWritable && !putUIntRobust(PROGRAM_NAMESPACE, H2_DELAY_KEY, legacyDelay)) {
+            Serial.println("Failed to migrate legacy hydrogen transport delay");
+        }
     }
     if (!programPrefs.isKey(WIND_STOP_KEY) && prefs.isKey("wind_time_s")) {
         uint32_t legacyWindStop = prefs.getUInt("wind_time_s", state.windStopSeconds);
         if (legacyWindStop > 600) legacyWindStop = 600;
-        programPrefs.putUInt(WIND_STOP_KEY, legacyWindStop);
+        if (nvsWritable && !putUIntRobust(PROGRAM_NAMESPACE, WIND_STOP_KEY, legacyWindStop)) {
+            Serial.println("Failed to migrate legacy wind stop delay");
+        }
     }
 
     // Load all persisted segments with defaults from Config.h
@@ -186,20 +626,17 @@ void initWebServerSafe() {
     };
     state.windName = loadName("wind_name", "Wind");
     state.solarName = loadName("solar_name", "Solar");
-    state.electricityProductionName = loadName("elec_prod_name", "Electricity Production");
     state.hydrogenProductionName = loadName("h2_prod_name", "Hydrogen Production");
     state.hydrogenTransportName = loadName("h2_trans_name", "Hydrogen Transport");
     state.hydrogenStorage1Name = loadMigratedName("h2_stor1_name", "Hydrogen Storage 1", "Hydrogen Storage In");
     state.hydrogenStorage2Name = loadMigratedName("h2_stor2_name", "Hydrogen Storage 2", "Hydrogen Storage Out");
     state.h2ConsumptionName = loadMigratedName("h2_cons_name", "Hydrogen Consumption", "Fabrication Direct");
-    state.fabricationName = loadName("fabr_name", "Fabrication");
+    state.fabricationName = loadMigratedName("fabr_name", "Fabrication", "Fabrication Fire");
     state.electricityTransportName = loadMigratedName("elec_tran_name", "Electricity Transport", "Fabrication Storage");
-    state.storageTransportName = loadName("stor_tran_name", "Storage Transport");
     state.storagePowerstationName = loadName("stor_pow_name", "Storage Powerstation");
 
     loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
     loadSegment("solar_start", "solar_end", SOLAR_LED_START, SOLAR_LED_END, state.solarSegmentStart, state.solarSegmentEnd);
-    loadSegment("elec_prod_s", "elec_prod_e", ELECTRICITY_PRODUCTION_LED_START, ELECTRICITY_PRODUCTION_LED_END, state.electricityProductionSegmentStart, state.electricityProductionSegmentEnd);
     loadSegment("h2_prod_s", "h2_prod_e", HYDROGEN_PRODUCTION_LED_START, HYDROGEN_PRODUCTION_LED_END, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
     loadSegment("h2_trans_s", "h2_trans_e", HYDROGEN_TRANSPORT_LED_START, HYDROGEN_TRANSPORT_LED_END, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
     loadSegment("h2_stor1_s", "h2_stor1_e", HYDROGEN_STORAGE1_LED_START, HYDROGEN_STORAGE1_LED_END, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
@@ -207,25 +644,21 @@ void initWebServerSafe() {
     loadSegment("h2_cons_s", "h2_cons_e", HYDROGEN_CONSUMPTION_LED_START, HYDROGEN_CONSUMPTION_LED_END, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
     loadSegment("fabr_start", "fabr_end", FABRICATION_LED_START, FABRICATION_LED_END, state.fabricationSegmentStart, state.fabricationSegmentEnd);
     loadSegment("elec_tran_s", "elec_tran_e", ELECTRICITY_TRANSPORT_LED_START, ELECTRICITY_TRANSPORT_LED_END, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd);
-    loadSegment("stor_tran_s", "stor_tran_e", STORAGE_TRANSPORT_LED_START, STORAGE_TRANSPORT_LED_END, state.storageTransportSegmentStart, state.storageTransportSegmentEnd);
     loadSegment("stor_pow_s", "stor_pow_e", STORAGE_POWERSTATION_LED_START, STORAGE_POWERSTATION_LED_END, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd);
 
     // Load directions with defaults that match historical behavior
     state.windDirForward = loadDir("wind_dir", true);
     state.solarDirForward = loadDir("solar_dir", false);
-    state.electricityProductionDirForward = loadDir("elec_prod_dir", true);
     state.hydrogenTransportDirForward = loadDir("h2_trans_dir", true);
     state.hydrogenStorage1DirForward = loadDir("h2_stor1_dir", true);
     state.hydrogenStorage2DirForward = loadDir("h2_stor2_dir", true);
     state.h2ConsumptionDirForward = loadDir("h2_cons_dir", true);
     state.electricityTransportDirForward = loadDir("elec_tran_dir", true);
-    state.storageTransportDirForward = loadDir("stor_tran_dir", true);
     state.storagePowerstationDirForward = loadDir("stor_pow_dir", true);
 
     // Load enabled flags
     state.windEnabled = loadEn("wind_en", true);
     state.solarEnabled = loadEn("solar_en", true);
-    state.electricityProductionEnabled = loadEn("elec_prod_en", true);
     state.electrolyserEnabled = loadEn("electrolyser_en", true);
     state.hydrogenProductionEnabled = loadEn("h2_prod_en", true);
     state.hydrogenTransportEnabled = loadEn("h2_trans_en", true);
@@ -233,35 +666,39 @@ void initWebServerSafe() {
     state.h2ConsumptionEnabled = loadEn("h2_cons_en", true);
     state.fabricationEnabled = loadEn("fabr_en", true);
     state.electricityTransportEnabled = loadEn("elec_tran_en", true);
-    state.storageTransportEnabled = loadEn("stor_tran_en", true);
     state.storagePowerstationEnabled = loadEn("stor_pow_en", true);
+
+    // Legacy segments not used in current flow: keep disabled.
+    state.electricityProductionEnabled = false;
+    state.storageTransportEnabled = false;
 
     // Load delays
     state.windDelay = loadDelay("wind_delay", LED_DELAY);
     state.solarDelay = loadDelay("solar_delay", LED_DELAY);
-    state.electricityProductionDelay = loadDelay("elec_prod_delay", LED_DELAY);
     state.hydrogenTransportDelay = loadDelay("h2_trans_delay", LED_DELAY);
     state.hydrogenStorage1Delay = loadDelay("h2_stor1_delay", LED_DELAY);
     state.hydrogenStorage2Delay = loadDelay("h2_stor2_delay", LED_DELAY);
     state.h2ConsumptionDelay = loadDelay("h2_cons_delay", LED_DELAY);
     state.electricityTransportDelay = loadDelay("elec_tran_delay", LED_DELAY);
-    state.storageTransportDelay = loadDelay("stor_tran_delay", LED_DELAY2);
     state.storagePowerstationDelay = loadDelay("stor_pow_delay", LED_DELAY2);
 
     // Load effect types
     // Load all effect types as 3-option: 0=Running, 1=Fire, 2=Fade
     state.windEffectType = loadEffect3("wind_eff", 0);
     state.solarEffectType = loadEffect3("solar_eff", 0);
-    state.electricityProductionEffectType = loadEffect3("elec_prod_eff", 0);
     state.hydrogenTransportEffectType = loadEffect3("h2_trans_eff", 0);
     state.hydrogenStorage1EffectType = loadEffect3("h2_stor1_eff", 0);
     state.hydrogenStorage2EffectType = loadEffect3("h2_stor2_eff", 0);
     state.h2ConsumptionEffectType = loadEffect3("h2_cons_eff", 0);
     state.electricityTransportEffectType = loadEffect3("elec_tran_eff", 0);
-    state.storageTransportEffectType = loadEffect3("stor_tran_eff", 0);
     state.storagePowerstationEffectType = loadEffect3("stor_pow_eff", 0);
     state.hydrogenProductionEffectType = loadEffect3("h2_prod_eff", 0);
     state.fabricationEffectType = loadEffect3("fabr_eff", 0);
+    
+    Serial.printf("Loaded effects after boot: wind=%d solar=%d h2trans=%d h2stor1=%d h2stor2=%d h2cons=%d elec=%d storagepow=%d h2prod=%d fabr=%d\n",
+        state.windEffectType, state.solarEffectType, state.hydrogenTransportEffectType, state.hydrogenStorage1EffectType,
+        state.hydrogenStorage2EffectType, state.h2ConsumptionEffectType, state.electricityTransportEffectType,
+        state.storagePowerstationEffectType, state.hydrogenProductionEffectType, state.fabricationEffectType);
 
     state.autoStartEnabled = programPrefs.getBool("auto_start", false);
     uint32_t transportDelayRaw = programPrefs.getUInt(H2_DELAY_KEY, UINT32_MAX);
@@ -273,11 +710,15 @@ void initWebServerSafe() {
         transportDelayRaw = prefs.getUInt(H2_DELAY_KEY_LEGACY, state.hydrogenTransportDelaySeconds);
     }
     uint16_t transportDelaySec = static_cast<uint16_t>(transportDelayRaw);
-    if (!programPrefs.isKey(H2_DELAY_KEY)) {
-        programPrefs.putUInt(H2_DELAY_KEY, transportDelaySec);
+    if (nvsWritable && !programPrefs.isKey(H2_DELAY_KEY)) {
+        if (!putUIntRobust(PROGRAM_NAMESPACE, H2_DELAY_KEY, transportDelaySec)) {
+            Serial.println("Failed to seed program H2 delay key");
+        }
     }
-    if (!prefs.isKey(H2_DELAY_KEY)) {
-        prefs.putUInt(H2_DELAY_KEY, transportDelaySec);
+    if (nvsWritable && !prefs.isKey(H2_DELAY_KEY)) {
+        if (!putUIntRobust(LED_CONFIG_NAMESPACE, H2_DELAY_KEY, transportDelaySec)) {
+            Serial.println("Failed to seed led-config H2 delay key");
+        }
     }
     if (transportDelaySec > 600) transportDelaySec = 600;
     state.hydrogenTransportDelaySeconds = static_cast<uint16_t>(transportDelaySec);
@@ -288,13 +729,53 @@ void initWebServerSafe() {
     }
     uint16_t windStopSec = static_cast<uint16_t>(windStopRaw);
     if (windStopSec > 600) windStopSec = 600;
-    if (!programPrefs.isKey(WIND_STOP_KEY)) {
-        programPrefs.putUInt(WIND_STOP_KEY, windStopSec);
+    if (nvsWritable && !programPrefs.isKey(WIND_STOP_KEY)) {
+        if (!putUIntRobust(PROGRAM_NAMESPACE, WIND_STOP_KEY, windStopSec)) {
+            Serial.println("Failed to seed program wind-stop key");
+        }
     }
-    if (!prefs.isKey(WIND_STOP_KEY)) {
-        prefs.putUInt(WIND_STOP_KEY, windStopSec);
+    if (nvsWritable && !prefs.isKey(WIND_STOP_KEY)) {
+        if (!putUIntRobust(LED_CONFIG_NAMESPACE, WIND_STOP_KEY, windStopSec)) {
+            Serial.println("Failed to seed led-config wind-stop key");
+        }
     }
     state.windStopSeconds = windStopSec;
+
+    uint32_t storageRunRaw = programPrefs.getUInt(STORAGE_RUN_KEY, UINT32_MAX);
+    if (storageRunRaw == UINT32_MAX) {
+        storageRunRaw = prefs.getUInt(STORAGE_RUN_KEY, state.storageRunSeconds);
+    }
+    uint16_t storageRunSec = static_cast<uint16_t>(storageRunRaw);
+    if (storageRunSec > 600) storageRunSec = 600;
+    if (nvsWritable && !programPrefs.isKey(STORAGE_RUN_KEY)) {
+        if (!putUIntRobust(PROGRAM_NAMESPACE, STORAGE_RUN_KEY, storageRunSec)) {
+            Serial.println("Failed to seed program storage-run key");
+        }
+    }
+    if (nvsWritable && !prefs.isKey(STORAGE_RUN_KEY)) {
+        if (!putUIntRobust(LED_CONFIG_NAMESPACE, STORAGE_RUN_KEY, storageRunSec)) {
+            Serial.println("Failed to seed led-config storage-run key");
+        }
+    }
+    state.storageRunSeconds = storageRunSec;
+
+    uint32_t restartDelayRaw = programPrefs.getUInt(RESTART_DELAY_KEY, UINT32_MAX);
+    if (restartDelayRaw == UINT32_MAX) {
+        restartDelayRaw = prefs.getUInt(RESTART_DELAY_KEY, state.restartDelaySeconds);
+    }
+    uint16_t restartDelaySec = static_cast<uint16_t>(restartDelayRaw);
+    if (restartDelaySec > 600) restartDelaySec = 600;
+    if (nvsWritable && !programPrefs.isKey(RESTART_DELAY_KEY)) {
+        if (!putUIntRobust(PROGRAM_NAMESPACE, RESTART_DELAY_KEY, restartDelaySec)) {
+            Serial.println("Failed to seed program restart-delay key");
+        }
+    }
+    if (nvsWritable && !prefs.isKey(RESTART_DELAY_KEY)) {
+        if (!putUIntRobust(LED_CONFIG_NAMESPACE, RESTART_DELAY_KEY, restartDelaySec)) {
+            Serial.println("Failed to seed led-config restart-delay key");
+        }
+    }
+    state.restartDelaySeconds = restartDelaySec;
 
     // Load pin settings
     state.ledDataPin = loadPin("led_data_pin", state.ledDataPin);
@@ -302,7 +783,7 @@ void initWebServerSafe() {
     state.buttonLedPin = loadPin("button_led_pin", state.buttonLedPin);
     state.streetLedPin = loadPin("street_led_pin", state.streetLedPin);
     state.windRelayPin = loadOutputPin("wind_relay_pin", state.windRelayPin);
-    state.electrolyserRelayPin = loadOutputPin("electrolyser_relay_pin", state.electrolyserRelayPin);
+    state.electrolyserRelayPin = loadOutputPin(ELECTROLYSER_RELAY_PIN_KEY, state.electrolyserRelayPin);
     state.windInfoLedPin = loadPin("wind_info_pin", state.windInfoLedPin);
     state.electrolyserInfoLedPin = loadPin("electrolyser_info_pin", state.electrolyserInfoLedPin);
     state.hydrogenProductionInfoLedPin = loadPin("h2_prod_info_pin", state.hydrogenProductionInfoLedPin);
@@ -314,7 +795,6 @@ void initWebServerSafe() {
     // Load per-segment colors (defaults come from SystemState fields)
     state.windColor = loadColor("wind_color", state.windColor);
     state.solarColor = loadColor("solar_color", state.solarColor);
-    state.electricityProductionColor = loadColor("elec_prod_color", state.electricityProductionColor);
     state.hydrogenProductionColor = loadColor("h2_prod_color", state.hydrogenProductionColor);
     state.hydrogenTransportColor = loadColor("h2_trans_color", state.hydrogenTransportColor);
     state.hydrogenStorage1Color = loadColor("h2_stor1_color", state.hydrogenStorage1Color);
@@ -322,7 +802,6 @@ void initWebServerSafe() {
     state.h2ConsumptionColor = loadColor("h2_cons_color", state.h2ConsumptionColor);
     state.fabricationColor = loadColor("fabr_color", state.fabricationColor);
     state.electricityTransportColor = loadColor("elec_tran_color", state.electricityTransportColor);
-    state.storageTransportColor = loadColor("stor_tran_color", state.storageTransportColor);
     state.storagePowerstationColor = loadColor("stor_pow_color", state.storagePowerstationColor);
 
     // Load custom segments
@@ -353,7 +832,7 @@ void initWebServerSafe() {
 
     // One-time back-compat migration: previous mappings differed for Hydrogen Production and Fabrication
     // Guard with a flag so we don't remap new values on every boot
-    if (!prefs.getBool("effects_v2", false)) {
+    if (prefsOk && nvsWritable && !prefs.getBool("effects_v2", false)) {
         // Old Hydrogen Production: 0=Fade,1=Fire,2=Running => map to 0=Running,1=Fire,2=Fade
         if (prefs.isKey("h2_prod_eff")) {
             int old = prefs.getInt("h2_prod_eff", state.hydrogenProductionEffectType);
@@ -378,7 +857,9 @@ void initWebServerSafe() {
             }
             state.fabricationEffectType = mapped;
         }
-        prefs.putBool("effects_v2", true);
+        if (!putBoolRobust(LED_CONFIG_NAMESPACE, "effects_v2", true)) {
+            Serial.println("effects_v2 migration flag write failed");
+        }
     }
     // Non-running segments direction and delay (for running option)
     state.hydrogenProductionDirForward = loadDir("h2_prod_dir", true);
@@ -390,7 +871,12 @@ void initWebServerSafe() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         int maxIndex = state.totalLeds > 0 ? state.totalLeds - 1 : 0;
         String maxIndexStr = String(maxIndex);
-        String page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Segments</title>"
+        String page;
+        if (!page.reserve(24576)) {
+            request->send(503, "text/plain", "Web UI tijdelijk niet beschikbaar (lage heap). Probeer opnieuw.");
+            return;
+        }
+        page = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>LED Segments</title>"
             "<style>body{font-family:Arial,sans-serif;max-width:900px;margin:20px auto;padding:10px;}"
             ".logo{text-align:center;margin:20px 0;}"
             ".logo img{max-width:200px;height:auto;}"
@@ -429,13 +915,12 @@ void initWebServerSafe() {
             "<button type='button' class='tabbtn' data-tab='status' onclick=\"openTab('status')\">5. Status</button>"
             "</div>";
 
-    page += "<form id='saveForm' method=\"POST\" action=\"/update\">";
+    page += "<form id='saveForm' method=\"POST\" action=\"/update\" onsubmit=\"return false;\">";
     page += "<div id='tab-program' class='tab-panel active'>";
     if (state.testMode) {
         page += "<div style='background:#fff3cd;padding:15px;border-radius:5px;margin:10px 0;border:2px solid #ffc107;'>"
                 "<b>LED LOOP TEST ACTIVE</b><br>Testing segment " + String(state.testSegmentStart) + "-" + String(state.testSegmentEnd) + "<br>"
-                "<form method='POST' action='/stoptest' style='display:inline;'>"
-                "<button type='submit' class='stop'>Stop Test</button></form>"
+                "<button type='button' class='stop' onclick=\"stopLedLoopTest()\">Stop Test</button>"
                 "<button type='button' class='test' style='margin-left:8px;' onclick=\"startProgram()\">Start Program</button></div>";
     }
     page += "<div class='segment'><b>Program</b><br>"
@@ -448,11 +933,14 @@ void initWebServerSafe() {
 
     page += "<div id='tab-pins' class='tab-panel'>";
     page += "<div class='segment'><b>Pin Settings</b><br>"
-        "LED data pin: <input type='number' name='led_data_pin' min='0' max='39' value='" + String(state.ledDataPin) + "' style='width:70px;'><br>"
         "Wind relay pin: <input type='number' name='wind_relay_pin' min='0' max='39' value='" + String(state.windRelayPin) + "' style='width:70px;'><br>"
+        "<button type='button' class='test' onclick=\"setRelay('wind','on')\">Wind ON</button>"
+        " <button type='button' class='stop' onclick=\"setRelay('wind','off')\">Wind OFF</button><br><br>"
         "Electrolyser relay pin: <input type='number' name='electrolyser_relay_pin' min='0' max='39' value='" + String(state.electrolyserRelayPin) + "' style='width:70px;'><br>"
-        "<small>LED data pin is applied after restart.</small>"
-        "<br><button type='submit'>Save Pin Settings</button>"
+        "<button type='button' class='test' onclick=\"setRelay('electrolyser','on')\">Electrolyser ON</button>"
+        " <button type='button' class='stop' onclick=\"setRelay('electrolyser','off')\">Electrolyser OFF</button><br>"
+        "<small>Manual relay mode is reset automatically when the program starts.</small>"
+        "<br><button type='button' onclick=\"savePinSettings()\">Save Pin Settings</button>"
         "</div>";
     page += "</div>";
 
@@ -460,7 +948,9 @@ void initWebServerSafe() {
     page += "<div class='segment'><b>Timing Settings</b><br>"
         "Stop wind production (seconds): <input type='number' name='wind_stop_s' min='0' max='600' value='" + String(state.windStopSeconds) + "'><br>"
         "Delay after hydrogen production (seconds): <input type='number' name='h2_trans_delay_s' min='0' max='600' value='" + String(state.hydrogenTransportDelaySeconds) + "'><br>"
-        "<button type='submit'>Save Timing Settings</button>"
+        "Hydrogen from storage runtime (seconds): <input type='number' name='storage_run_s' min='0' max='600' value='" + String(state.storageRunSeconds) + "'><br>"
+        "Restart delay after storage (seconds): <input type='number' name='restart_delay_s' min='0' max='600' value='" + String(state.restartDelaySeconds) + "'><br>"
+        "<button type='button' onclick=\"saveTimingSettings()\">Save Timing Settings</button>"
         "</div>";
     page += "</div>";
         
@@ -538,10 +1028,13 @@ void initWebServerSafe() {
         
     page += "<div id='tab-led' class='tab-panel'>";
     page += "<div class='segment'><b>LED Settings</b><br>"
+        "LED data pin: <input type='number' name='led_data_pin' min='0' max='39' value='" + String(state.ledDataPin) + "' style='width:70px;'><br>"
         "Total LEDs connected: <input type='number' name='total_leds' min='1' max='" + String(NUM_LEDS) + "' value='" + String(state.totalLeds) + "'>"
+        "<br><small>LED data pin is applied after restart.</small>"
         "</div>";
     addSegmentDir(state.windName.c_str(), "wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", state.windColor, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType);
     addSegmentDir(state.solarName.c_str(), "solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", state.solarColor, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType);
+    addSegmentDir(state.hydrogenTransportName.c_str(), "h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", state.hydrogenTransportColor, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType);
     addSegmentDir(state.hydrogenStorage1Name.c_str(), "h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", state.hydrogenStorage1Color, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType);
     addSegmentDir(state.hydrogenStorage2Name.c_str(), "h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", state.hydrogenStorage2Color, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType);
     addSegmentDir(state.h2ConsumptionName.c_str(), "h2_cons_name", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", "h2_cons_eff", "h2_cons_color", state.h2ConsumptionColor, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled, state.h2ConsumptionDelay, state.h2ConsumptionEffectType);
@@ -582,39 +1075,48 @@ void initWebServerSafe() {
         }
 
 
-        page += "<button type='submit'>Save All Settings</button></div></form>";
+        page += "<button type='button' onclick=\"saveLedSettings()\">Save LED Settings</button></div></form>";
 
         auto statusBadge = [&](bool on) -> String {
             return String("<span class='badge ") + (on ? "on" : "off") + "'>" + (on ? "ACTIVE" : "OFF") + "</span>";
         };
+        auto statusBadgeWithId = [&](bool on, const String& id) -> String {
+            return String("<span id='") + id + "' class='badge " + (on ? "on" : "off") + "'>" + (on ? "ACTIVE" : "OFF") + "</span>";
+        };
 
         page += "<div id='tab-status' class='tab-panel'>";
         page += "<div class='segment'><b>Program Status</b>";
-        page += "<div class='status-row'><span>Program Active</span>" + statusBadge(state.generalTimerActive) + "</div>";
-        page += "<div class='status-row'><span>Test mode</span>" + statusBadge(state.testMode) + "</div>";
+        page += "<div class='status-row'><span>Program part</span><span id='st_program_part'>-</span></div>";
+        page += "<div class='status-row'><span>Flow phase</span><span id='st_flow_phase'>-</span></div>";
+        page += "<div class='status-row'><span>Program Active</span>" + statusBadgeWithId(state.generalTimerActive && !state.testMode, "st_program_active") + "</div>";
+        page += "<div class='status-row'><span>Test mode</span>" + statusBadgeWithId(state.testMode, "st_test_mode") + "</div>";
         page += "</div>";
 
         page += "<div class='segment'><b>Segment Status</b>";
-        page += "<div class='status-row'><span>" + state.windName + "</span>" + statusBadge(state.windEnabled && state.windOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.solarName + "</span>" + statusBadge(state.solarEnabled && state.solarOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.hydrogenStorage1Name + "</span>" + statusBadge(state.hydrogenStorageEnabled && state.hydrogenStorageOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.hydrogenStorage2Name + "</span>" + statusBadge(state.hydrogenStorageEnabled && state.hydrogenStorageOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.h2ConsumptionName + "</span>" + statusBadge(state.h2ConsumptionEnabled && state.h2ConsumptionOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.fabricationName + "</span>" + statusBadge(state.fabricationEnabled && state.fabricationOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.electricityTransportName + "</span>" + statusBadge(state.electricityTransportEnabled && state.electricityTransportOn) + "</div>";
-        page += "<div class='status-row'><span>" + state.storagePowerstationName + "</span>" + statusBadge(state.storagePowerstationEnabled && state.storagePowerstationOn) + "</div>";
+        page += "<div class='status-row'><span>" + state.windName + "</span>" + statusBadgeWithId(state.windEnabled && state.windOn, "st_wind") + "</div>";
+        page += "<div class='status-row'><span>" + state.solarName + "</span>" + statusBadgeWithId(state.solarEnabled && state.solarOn, "st_solar") + "</div>";
+        page += "<div class='status-row'><span>" + state.hydrogenTransportName + "</span>" + statusBadgeWithId(state.hydrogenTransportEnabled && state.hydrogenTransportOn, "st_h2_transport") + "</div>";
+        page += "<div class='status-row'><span>" + state.hydrogenStorage1Name + "</span>" + statusBadgeWithId(state.hydrogenStorageEnabled && state.hydrogenStorageInOn, "st_h2_storage_in") + "</div>";
+        page += "<div class='status-row'><span>" + state.hydrogenStorage2Name + "</span>" + statusBadgeWithId(state.hydrogenStorageEnabled && state.hydrogenStorageOutOn, "st_h2_storage_out") + "</div>";
+        page += "<div class='status-row'><span>" + state.h2ConsumptionName + "</span>" + statusBadgeWithId(state.h2ConsumptionEnabled && state.h2ConsumptionOn, "st_h2_consumption") + "</div>";
+        page += "<div class='status-row'><span>" + state.fabricationName + "</span>" + statusBadgeWithId(state.fabricationEnabled && state.fabricationOn, "st_fabrication") + "</div>";
+        page += "<div class='status-row'><span>" + state.electricityTransportName + "</span>" + statusBadgeWithId(state.electricityTransportEnabled && state.electricityTransportOn, "st_electricity_transport") + "</div>";
+        page += "<div class='status-row'><span>" + state.storagePowerstationName + "</span>" + statusBadgeWithId(state.storagePowerstationEnabled && state.storagePowerstationOn, "st_storage_powerstation") + "</div>";
 
         for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
             auto &cs = state.custom[i];
             if (!cs.inUse) continue;
             bool customOn = cs.enabled && EffectUtils::isTriggerActive(state, cs.trigger);
-            page += "<div class='status-row'><span>" + cs.name + "</span>" + statusBadge(customOn) + "</div>";
+            page += "<div class='status-row'><span>" + cs.name + "</span>" + statusBadgeWithId(customOn, String("st_custom_") + String(i)) + "</div>";
         }
 
         page += "</div>"
-            "<form method='POST' action='/reset_loop' onsubmit=\"return confirm('Reset the program loop?');\" style='display:inline;'>"
-            "<button type='submit' class='stop'>Reset program loop</button>"
-            "</form>"
+            "<div class='segment'><b>Relay Status</b>";
+        bool windRelayActive = state.windRelayOutputOn;
+        bool electrolyserRelayActive = state.electrolyserRelayOutputOn;
+        page += "<div class='status-row'><span>Wind Relay</span>" + statusBadgeWithId(windRelayActive, "st_wind_relay") + "</div>";
+        page += "<div class='status-row'><span>Electrolyser Relay</span>" + statusBadgeWithId(electrolyserRelayActive, "st_electrolyser_relay") + "</div>";
+        page += "</div>"
             "</div><hr>"
             "<script>\n"
             "function openTab(tabId){\n"
@@ -625,24 +1127,82 @@ void initWebServerSafe() {
             "  if(panel) panel.classList.add('active');\n"
             "  if(btn) btn.classList.add('active');\n"
             "}\n"
+            "function setStatusBadge(id,on){\n"
+            "  const el=document.getElementById(id);\n"
+            "  if(!el) return;\n"
+            "  el.classList.toggle('on', !!on);\n"
+            "  el.classList.toggle('off', !on);\n"
+            "  el.textContent = on ? 'ACTIVE' : 'OFF';\n"
+            "}\n"
+            "function setStatusText(id,value){\n"
+            "  const el=document.getElementById(id);\n"
+            "  if(!el) return;\n"
+            "  el.textContent = value || '-';\n"
+            "}\n"
+            "function refreshStatusBadges(){\n"
+            "  fetch('/status_data')\n"
+            "    .then(r=>{ if(!r.ok) throw new Error('status fetch failed'); return r.json(); })\n"
+            "    .then(s=>{\n"
+            "      setStatusText('st_flow_phase', s.flow_phase);\n"
+            "      setStatusText('st_program_part', s.program_part);\n"
+            "      setStatusBadge('st_program_active', s.program_active);\n"
+            "      setStatusBadge('st_test_mode', s.test_mode);\n"
+            "      setStatusBadge('st_wind', s.wind);\n"
+            "      setStatusBadge('st_solar', s.solar);\n"
+            "      setStatusBadge('st_h2_transport', s.h2_transport);\n"
+            "      setStatusBadge('st_h2_storage_in', s.h2_storage_in);\n"
+            "      setStatusBadge('st_h2_storage_out', s.h2_storage_out);\n"
+            "      setStatusBadge('st_h2_consumption', s.h2_consumption);\n"
+            "      setStatusBadge('st_fabrication', s.fabrication);\n"
+            "      setStatusBadge('st_electricity_transport', s.electricity_transport);\n"
+            "      setStatusBadge('st_storage_powerstation', s.storage_powerstation);\n"
+            "      setStatusBadge('st_wind_relay', s.wind_relay);\n"
+            "      setStatusBadge('st_electrolyser_relay', s.electrolyser_relay);\n"
+            "      for(let i=0;i<8;i++){\n"
+            "        const key='custom_'+i;\n"
+            "        if(Object.prototype.hasOwnProperty.call(s,key)){\n"
+            "          setStatusBadge('st_'+key, s[key]);\n"
+            "        }\n"
+            "      }\n"
+            "    })\n"
+            "    .catch(()=>{});\n"
+            "}\n"
+            "setInterval(refreshStatusBadges, 2000);\n"
+            "refreshStatusBadges();\n"
             "function addCustomSegment(){\n"
             "  fetch('/add_custom',{method:'POST'})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Failed to add custom segment'));\n"
             "}\n"
             "function startLedLoopTest(){\n"
-            "  const totalInput = document.querySelector(\"input[name='total_leds']\");\n"
-            "  const total = Math.max(1, parseInt(totalInput ? totalInput.value : '1', 10) || 1);\n"
-            "  const body = new URLSearchParams({start:'0',end:String(total-1),dir:'1',eff:'0',delay:'40',color:'#FFFFFF'}).toString();\n"
-            "  fetch('/test',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "  fetch('/start_test_all',{method:'POST'})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Test start failed'));\n"
+            "}\n"
+            "function stopLedLoopTest(){\n"
+            "  fetch('/stoptest',{method:'POST'})\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(()=>alert('Stop test failed'));\n"
             "}\n"
             "function removeCustomSegment(id){\n"
             "  const body=new URLSearchParams({id:id}).toString();\n"
             "  fetch('/remove_custom',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Failed to remove custom segment'));\n"
+            "}\n"
+            "function setRelay(relay,state){\n"
+            "  let body;\n"
+            "  if(relay==='auto'){ body = new URLSearchParams({relay:'auto',state:'auto'}).toString(); }\n"
+            "  else {\n"
+            "    const pinName = relay==='wind' ? 'wind_relay_pin' : 'electrolyser_relay_pin';\n"
+            "    const pinInput = document.querySelector(\"input[name='\"+pinName+\"']\");\n"
+            "    if(!pinInput){ alert('Relay pin input not found'); return; }\n"
+            "    body = new URLSearchParams({relay: relay, state: state, pin: pinInput.value}).toString();\n"
+            "  }\n"
+            "  fetch('/set_relay',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "    .then(r=>{ if(!r.ok){ return r.text().then(t=>{ throw new Error(t||'Relay test failed'); }); } return r.text(); })\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(e=>alert(e.message || 'Relay test failed'));\n"
             "}\n"
             "function toggleDirDelay(sel,dirName,delayName,colorName){\n"
             "  const v = sel.value;\n"
@@ -673,13 +1233,7 @@ void initWebServerSafe() {
             "    .catch(()=>alert('Test request failed'));\n"
             "}\n"
             "function startProgram(){\n"
-            "  const form = document.getElementById('saveForm');\n"
-            "  if(!form){ alert('Settings form not found'); return; }\n"
-            "  const fd = new FormData(form);\n"
-            "  fd.append('start_program','1');\n"
-            "  const body = new URLSearchParams();\n"
-            "  for (const [k,v] of fd.entries()) body.append(k, v);\n"
-            "  fetch('/update',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()})\n"
+            "  fetch('/start_program',{method:'POST'})\n"
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Program start failed'));\n"
             "}\n"
@@ -688,12 +1242,48 @@ void initWebServerSafe() {
             "    .then(()=>window.location.reload())\n"
             "    .catch(()=>alert('Process chain start failed'));\n"
             "}\n"
+            "function saveLedSettings(){\n"
+            "  const form = document.getElementById('saveForm');\n"
+            "  if(!form){ alert('Settings form not found'); return; }\n"
+            "  const fd = new FormData(form);\n"
+            "  fd.append('save_mode','led');\n"
+            "  const body = new URLSearchParams();\n"
+            "  for (const [k,v] of fd.entries()) body.append(k, v);\n"
+            "  fetch('/update',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()})\n"
+            "    .then(r=>{ if(!r.ok){ return r.text().then(t=>{ throw new Error(t||'LED save failed'); }); } })\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(e=>alert(e.message || 'LED save failed'));\n"
+            "}\n"
+            "function savePinSettings(){\n"
+            "  const windPin = document.querySelector(\"input[name='wind_relay_pin']\");\n"
+            "  const elyPin = document.querySelector(\"input[name='electrolyser_relay_pin']\");\n"
+            "  if(!windPin || !elyPin){ alert('Pin inputs not found'); return; }\n"
+            "  const body = new URLSearchParams({wind_relay_pin: windPin.value, electrolyser_relay_pin: elyPin.value}).toString();\n"
+            "  fetch('/update_pins',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "    .then(r=>{ if(!r.ok){ return r.text().then(t=>{ throw new Error(t||'Pin save failed'); }); } })\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(e=>alert(e.message || 'Pin save failed'));\n"
+            "}\n"
+            "function saveTimingSettings(){\n"
+            "  const wind = document.querySelector(\"input[name='wind_stop_s']\");\n"
+            "  const h2 = document.querySelector(\"input[name='h2_trans_delay_s']\");\n"
+            "  const storageRun = document.querySelector(\"input[name='storage_run_s']\");\n"
+            "  const restartDelay = document.querySelector(\"input[name='restart_delay_s']\");\n"
+            "  if(!wind || !h2 || !storageRun || !restartDelay){ alert('Timing inputs not found'); return; }\n"
+            "  const body = new URLSearchParams({wind_stop_s: wind.value, h2_trans_delay_s: h2.value, storage_run_s: storageRun.value, restart_delay_s: restartDelay.value}).toString();\n"
+            "  fetch('/update_timing',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})\n"
+            "    .then(r=>{ if(!r.ok){ return r.text().then(t=>{ throw new Error(t||'Timing save failed'); }); } })\n"
+            "    .then(()=>window.location.reload())\n"
+            "    .catch(e=>alert(e.message || 'Timing save failed'));\n"
+            "}\n"
             
             "</script>"
             "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
             "<button type='submit' class='restart'>Restart ESP</button></form></body></html>";
-        
-        request->send(200, "text/html", page);
+
+        AsyncResponseStream *response = request->beginResponseStream("text/html");
+        response->print(page);
+        request->send(response);
     });
 
         // Trigger configuration view removed; triggers now fixed in firmware defaults.
@@ -728,11 +1318,7 @@ void initWebServerSafe() {
                 "<a href='/status'><button type='button'>Status</button></a>"
                 "</div>"
                 "<p>Live status of all trigger conditions (auto-refreshes every 2 seconds):</p>";
-          page += "<div style='margin:15px 0;'>"
-                 "<form method='POST' action='/reset_loop' onsubmit=\"return confirm('Reset the program loop?');\" style='display:inline;'>"
-                 "<button type='submit' class='reset'>Reset Program Loop</button>"
-                 "</form>"
-                 "</div>";
+           page += "<div style='margin:15px 0;'></div>";
         
             // Helper to show trigger status using EffectUtils::isTriggerActive
             auto showTriggerStatus = [&](const char* label, TriggerType trigger) {
@@ -754,6 +1340,109 @@ void initWebServerSafe() {
         
             page += "</body></html>";
             request->send(200, "text/html", page);
+        });
+
+        server.on("/status_data", HTTP_GET, [](AsyncWebServerRequest *request){
+            String json = "{";
+            auto addBool = [&](const String& key, bool value) {
+                if (json.length() > 1) json += ",";
+                json += "\"" + key + "\":" + String(value ? "true" : "false");
+            };
+            auto addString = [&](const String& key, const String& value) {
+                if (json.length() > 1) json += ",";
+                String safe = value;
+                safe.replace("\\", "\\\\");
+                safe.replace("\"", "\\\"");
+                json += "\"" + key + "\":\"" + safe + "\"";
+            };
+
+            String flowPhase = "Idle";
+            String programPart = "Idle";
+            if (state.testMode) {
+                flowPhase = "Test mode";
+                programPart = "Test mode";
+            } else if (state.restartDelayActive) {
+                programPart = "Restart delay";
+                flowPhase = "Waiting restart delay";
+            } else if (state.emptyPipe) {
+                programPart = "Hydrogen from storage";
+                if (state.activeProgram == ProgramVariant::HYDROGEN_FROM_STORAGE && state.hydrogenStorageOutOn) {
+                    if (state.hydrogenTransportOn) {
+                        flowPhase = "Hydrogen from storage - Storage Out running + Draining Transport";
+                    } else if (state.hydrogenStorageInOn) {
+                        flowPhase = "Hydrogen from storage - Storage Out running + Draining Storage In";
+                    } else {
+                        flowPhase = "Hydrogen from storage - Storage Out running";
+                    }
+                } else if (state.hydrogenTransportOn) {
+                    flowPhase = "Wind stop - draining Hydrogen Transport";
+                } else if (state.hydrogenStorageInOn) {
+                    flowPhase = "Wind stop - draining Hydrogen Storage In";
+                } else {
+                    flowPhase = "Wind stop - drain complete";
+                }
+            } else if (state.generalTimerActive) {
+                if (state.activeProgram == ProgramVariant::HYDROGEN_FROM_STORAGE) {
+                    programPart = "Hydrogen from storage";
+                    if (state.hydrogenStorageOutOn) {
+                        flowPhase = "Hydrogen from storage - Storage Out running";
+                    } else if (state.h2ConsumptionOn) {
+                        flowPhase = "Hydrogen from storage - Fabrication Direct running";
+                    } else if (state.fabricationOn) {
+                        flowPhase = "Hydrogen from storage - Fabrication Fire running";
+                    } else {
+                        flowPhase = "Hydrogen from storage - waiting";
+                    }
+                } else if (state.windOn && !state.solarOn) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Wind running";
+                } else if (state.windOn && state.solarOn && !state.hydrogenTransportOn && state.hydrogenTransportDelayActive) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Waiting Hydrogen Transport delay";
+                } else if (state.hydrogenTransportOn && !state.hydrogenStorageInOn) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Hydrogen Transport running";
+                } else if (state.hydrogenStorageInOn) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Hydrogen Storage In running";
+                } else if (state.h2ConsumptionOn) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Fabrication Direct running";
+                } else if (state.fabricationOn) {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Fabrication Fire running";
+                } else {
+                    programPart = "Hydrogen from renewable";
+                    flowPhase = "Program active";
+                }
+            }
+
+            addString("flow_phase", flowPhase);
+            addString("program_part", programPart);
+
+            addBool("program_active", state.generalTimerActive && !state.testMode);
+            addBool("test_mode", state.testMode);
+            addBool("wind", state.windEnabled && state.windOn);
+            addBool("solar", state.solarEnabled && state.solarOn);
+            addBool("h2_transport", state.hydrogenTransportEnabled && state.hydrogenTransportOn);
+            addBool("h2_storage_in", state.hydrogenStorageEnabled && state.hydrogenStorageInOn);
+            addBool("h2_storage_out", state.hydrogenStorageEnabled && state.hydrogenStorageOutOn);
+            addBool("h2_consumption", state.h2ConsumptionEnabled && state.h2ConsumptionOn);
+            addBool("fabrication", state.fabricationEnabled && state.fabricationOn);
+            addBool("electricity_transport", state.electricityTransportEnabled && state.electricityTransportOn);
+            addBool("storage_powerstation", state.storagePowerstationEnabled && state.storagePowerstationOn);
+            addBool("wind_relay", state.windRelayOutputOn);
+            addBool("electrolyser_relay", state.electrolyserRelayOutputOn);
+
+            for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
+                auto &cs = state.custom[i];
+                if (!cs.inUse) continue;
+                bool customOn = cs.enabled && EffectUtils::isTriggerActive(state, cs.trigger);
+                addBool(String("custom_") + String(i), customOn);
+            }
+
+            json += "}";
+            request->send(200, "application/json", json);
         });
 
         server.on("/reset_loop", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -822,6 +1511,14 @@ void initWebServerSafe() {
 
     // Handle update for all segments
     server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
+        String saveMode = "full";
+        if (request->hasParam("save_mode", true)) {
+            saveMode = request->getParam("save_mode", true)->value();
+            saveMode.trim();
+            saveMode.toLowerCase();
+        }
+        bool ledOnly = (saveMode == "led");
+
         uint16_t newLedCount = state.totalLeds;
         if (request->hasParam("total_leds", true)) {
             int requested = request->getParam("total_leds", true)->value().toInt();
@@ -849,6 +1546,11 @@ void initWebServerSafe() {
             if (v.length() > 32) v = v.substring(0, 32);
             out = v;
             return true;
+        };
+        auto packColorLocal = [](CRGB c) -> uint32_t {
+            return (static_cast<uint32_t>(c.r) << 16) |
+                   (static_cast<uint32_t>(c.g) << 8) |
+                   static_cast<uint32_t>(c.b);
         };
         auto getDir = [&](const char* dirName, bool &outDir) -> bool {
             if (!request->hasParam(dirName, true)) return false;
@@ -909,37 +1611,23 @@ void initWebServerSafe() {
             }
         };
 
-    int ws, we, ss, se, eps, epe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sts, ste, sps, spe;
-    bool wdir, sdir, epdir, htdir, h1dir, h2dir, hcdir, etdir, stdir, spdir, fbdir;
-    int wdly, sdly, epdly, htdly, h1dly, h2dly, hcdly, etdly, stdly, spdly, fbdly;
-    int weff, seff, epeff, hteff, h1eff, h2eff, hceff, eteff, steff, speff;
+    int ws, we, ss, se, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sps, spe;
+    bool wdir, sdir, htdir, h1dir, h2dir, hcdir, etdir, spdir, fbdir;
+    int wdly, sdly, htdly, h1dly, h2dly, hcdly, etdly, spdly, fbdly;
+    int weff, seff, hteff, h1eff, h2eff, hceff, eteff, speff;
     int fbeff; // fabrication effect
     uint8_t ledDataPin, windRelayPin, electrolyserRelayPin;
-    uint32_t wcol, scol, epcol, htcol, hs1col, hs2col, hccol, fbcol, etcol, stcol, spcol;
-    String wname, sname, epname, htname, hs1name, hs2name, hcname, fbname, etname, stname, spname;
-    uint16_t h2delaySeconds, windStopSeconds;
+    uint32_t wcol, scol, htcol, hs1col, hs2col, hccol, fbcol, etcol, spcol;
+    String wname, sname, htname, hs1name, hs2name, hcname, fbname, etname, spname;
+    uint16_t h2delaySeconds, windStopSeconds, storageRunSeconds, restartDelaySeconds;
 
-        eps = state.electricityProductionSegmentStart;
-        epe = state.electricityProductionSegmentEnd;
         hts = state.hydrogenTransportSegmentStart;
         hte = state.hydrogenTransportSegmentEnd;
-        epdir = state.electricityProductionDirForward;
         htdir = state.hydrogenTransportDirForward;
-        epdly = state.electricityProductionDelay;
         htdly = state.hydrogenTransportDelay;
-        epeff = state.electricityProductionEffectType;
         hteff = state.hydrogenTransportEffectType;
-        epcol = ((uint32_t)state.electricityProductionColor.r << 16) | ((uint32_t)state.electricityProductionColor.g << 8) | (uint32_t)state.electricityProductionColor.b;
         htcol = ((uint32_t)state.hydrogenTransportColor.r << 16) | ((uint32_t)state.hydrogenTransportColor.g << 8) | (uint32_t)state.hydrogenTransportColor.b;
-        epname = state.electricityProductionName;
         htname = state.hydrogenTransportName;
-        sts = state.storageTransportSegmentStart;
-        ste = state.storageTransportSegmentEnd;
-        stdir = state.storageTransportDirForward;
-        stdly = state.storageTransportDelay;
-        steff = state.storageTransportEffectType;
-        stcol = ((uint32_t)state.storageTransportColor.r << 16) | ((uint32_t)state.storageTransportColor.g << 8) | (uint32_t)state.storageTransportColor.b;
-        stname = state.storageTransportName;
         
         if (!getSegment("wind_start", "wind_end", ws, we) ||
             !getSegment("solar_start", "solar_end", ss, se) ||
@@ -987,6 +1675,8 @@ void initWebServerSafe() {
             !getDelay("fabr_delay", fbdly) ||
             !getDelaySeconds("wind_stop_s", windStopSeconds) ||
             !getDelaySeconds("h2_trans_delay_s", h2delaySeconds) ||
+            !getDelaySeconds("storage_run_s", storageRunSeconds) ||
+            !getDelaySeconds("restart_delay_s", restartDelaySeconds) ||
             !getName("wind_name", wname) ||
             !getName("solar_name", sname) ||
             !getName("h2_stor1_name", hs1name) ||
@@ -1023,13 +1713,11 @@ void initWebServerSafe() {
         // Checkboxes (missing means false)
         bool wen  = getCheckbox("wind_en");
         bool sen  = getCheckbox("solar_en");
-        bool epen = false;
-        bool hten = false;
+        bool hten = getCheckbox("h2_trans_en");
         bool hsen = getCheckbox("h2_stor_en");
         bool hcen = getCheckbox("h2_cons_en");
         bool fben = getCheckbox("fabr_en");
         bool eten = getCheckbox("elec_tran_en");
-        bool sten = false;
         bool spen = getCheckbox("stor_pow_en");
         bool elyen = state.electrolyserEnabled;
         bool autoStart = getCheckbox("auto_start");
@@ -1042,7 +1730,6 @@ void initWebServerSafe() {
         // Built-ins
         addRange(wname, ws, we, wen);
         addRange(sname, ss, se, sen);
-        addRange(epname, eps, epe, epen);
         addRange(htname, hts, hte, hten);
         addRange(hs1name, h1s, h1e, hsen);
         addRange(hs2name, h2s, h2e, hsen);
@@ -1102,121 +1789,187 @@ void initWebServerSafe() {
             }
         }
 
+        bool persistFailed = false;
+        String persistFailedKey;
+        auto persist = [&](bool ok, const char* key) {
+            if (!ok) {
+                if (!persistFailed) {
+                    Serial.printf("Persistence failed in /update at key: %s\n", key);
+                    persistFailedKey = key;
+                }
+                persistFailed = true;
+            }
+            return ok;
+        };
+        auto sendPersistFailure = [&]() {
+            String msg = String("Failed to persist settings at key: ") + (persistFailedKey.length() ? persistFailedKey : String("unknown"));
+            request->send(500, "text/plain", msg);
+        };
+
         // Save all to preferences
-        prefs.putString("wind_name", wname);
-        prefs.putString("solar_name", sname);
-        prefs.putString("elec_prod_name", epname);
-        prefs.putString("h2_trans_name", htname);
-        prefs.putString("h2_stor1_name", hs1name);
-        prefs.putString("h2_stor2_name", hs2name);
-        prefs.putString("h2_cons_name", hcname);
-        prefs.putString("fabr_name", fbname);
-        prefs.putString("elec_tran_name", etname);
-        prefs.putString("stor_tran_name", stname);
-        prefs.putString("stor_pow_name", spname);
         auto saveBuiltInSegment = [&](const char* nameKey, const char* startKey, const char* endKey,
                                       const char* dirKey, const char* enKey, const char* delayKey,
                                       const char* effKey, const char* colorKey,
                                       const String &name, int start, int end,
-                                      bool dir, bool en, int delay, int eff, uint32_t color) {
-            prefs.putString(nameKey, name);
-            prefs.putBool(enKey, en);
+                                      bool dir, bool en, int delay, int eff, uint32_t color,
+                                      const String &curName, int curStart, int curEnd,
+                                      bool curDir, bool curEn, int curDelay, int curEff, uint32_t curColor) {
+            if (persistFailed) return;
+            if (name != curName) {
+                persist(putStringRobust(LED_CONFIG_NAMESPACE, nameKey, name), nameKey);
+                if (persistFailed) return;
+            }
+            if (en != curEn) {
+                persist(putBoolRobust(LED_CONFIG_NAMESPACE, enKey, en), enKey);
+            }
+            if (persistFailed) return;
+            if (start != curStart) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, startKey, start), startKey);
+            }
+            if (persistFailed) return;
+            if (end != curEnd) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, endKey, end), endKey);
+            }
+            if (persistFailed) return;
             if (!en) return;
-            prefs.putInt(startKey, start);
-            prefs.putInt(endKey, end);
-            prefs.putBool(dirKey, dir);
-            prefs.putInt(delayKey, delay);
-            prefs.putInt(effKey, eff);
-            prefs.putUInt(colorKey, color);
+            if (dir != curDir) {
+                persist(putBoolRobust(LED_CONFIG_NAMESPACE, dirKey, dir), dirKey);
+            }
+            if (persistFailed) return;
+            if (delay != curDelay) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, delayKey, delay), delayKey);
+            }
+            if (persistFailed) return;
+            if (color != curColor) {
+                persist(putUIntRobust(LED_CONFIG_NAMESPACE, colorKey, color), colorKey);
+            }
+            if (persistFailed) return;
+            if (eff != curEff) {
+                Serial.printf("Saving effect: key=%s newVal=%d oldVal=%d\n", effKey, eff, curEff);
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, effKey, eff), effKey);
+            }
         };
 
-        saveBuiltInSegment("wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", wname, ws, we, wdir, wen, wdly, weff, wcol);
-        saveBuiltInSegment("solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", sname, ss, se, sdir, sen, sdly, seff, scol);
-        saveBuiltInSegment("elec_prod_name", "elec_prod_s", "elec_prod_e", "elec_prod_dir", "elec_prod_en", "elec_prod_delay", "elec_prod_eff", "elec_prod_color", epname, eps, epe, epdir, epen, epdly, epeff, epcol);
-        saveBuiltInSegment("h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", htname, hts, hte, htdir, hten, htdly, hteff, htcol);
-        saveBuiltInSegment("h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", hs1name, h1s, h1e, h1dir, hsen, h1dly, h1eff, hs1col);
-        saveBuiltInSegment("h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", hs2name, h2s, h2e, h2dir, hsen, h2dly, h2eff, hs2col);
-        saveBuiltInSegment("h2_cons_name", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", "h2_cons_eff", "h2_cons_color", hcname, hcs, hce, hcdir, hcen, hcdly, hceff, hccol);
-        saveBuiltInSegment("fabr_name", "fabr_start", "fabr_end", "fabr_dir", "fabr_en", "fabr_delay", "fabr_eff", "fabr_color", fbname, fs, fe, fbdir, fben, fbdly, fbeff, fbcol);
-        saveBuiltInSegment("elec_tran_name", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", "elec_tran_delay", "elec_tran_eff", "elec_tran_color", etname, ets, ete, etdir, eten, etdly, eteff, etcol);
-        saveBuiltInSegment("stor_tran_name", "stor_tran_s", "stor_tran_e", "stor_tran_dir", "stor_tran_en", "stor_tran_delay", "stor_tran_eff", "stor_tran_color", stname, sts, ste, stdir, sten, stdly, steff, stcol);
-        saveBuiltInSegment("stor_pow_name", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", "stor_pow_delay", "stor_pow_eff", "stor_pow_color", spname, sps, spe, spdir, spen, spdly, speff, spcol);
+        saveBuiltInSegment("wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", wname, ws, we, wdir, wen, wdly, weff, wcol, state.windName, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType, packColorLocal(state.windColor));
+        saveBuiltInSegment("solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", sname, ss, se, sdir, sen, sdly, seff, scol, state.solarName, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType, packColorLocal(state.solarColor));
+        saveBuiltInSegment("h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", htname, hts, hte, htdir, hten, htdly, hteff, htcol, state.hydrogenTransportName, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType, packColorLocal(state.hydrogenTransportColor));
+        saveBuiltInSegment("h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", hs1name, h1s, h1e, h1dir, hsen, h1dly, h1eff, hs1col, state.hydrogenStorage1Name, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType, packColorLocal(state.hydrogenStorage1Color));
+        saveBuiltInSegment("h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", hs2name, h2s, h2e, h2dir, hsen, h2dly, h2eff, hs2col, state.hydrogenStorage2Name, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType, packColorLocal(state.hydrogenStorage2Color));
+        saveBuiltInSegment("h2_cons_name", "h2_cons_s", "h2_cons_e", "h2_cons_dir", "h2_cons_en", "h2_cons_delay", "h2_cons_eff", "h2_cons_color", hcname, hcs, hce, hcdir, hcen, hcdly, hceff, hccol, state.h2ConsumptionName, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd, state.h2ConsumptionDirForward, state.h2ConsumptionEnabled, state.h2ConsumptionDelay, state.h2ConsumptionEffectType, packColorLocal(state.h2ConsumptionColor));
+        saveBuiltInSegment("fabr_name", "fabr_start", "fabr_end", "fabr_dir", "fabr_en", "fabr_delay", "fabr_eff", "fabr_color", fbname, fs, fe, fbdir, fben, fbdly, fbeff, fbcol, state.fabricationName, state.fabricationSegmentStart, state.fabricationSegmentEnd, state.fabricationDirForward, state.fabricationEnabled, state.fabricationDelay, state.fabricationEffectType, packColorLocal(state.fabricationColor));
+        saveBuiltInSegment("elec_tran_name", "elec_tran_s", "elec_tran_e", "elec_tran_dir", "elec_tran_en", "elec_tran_delay", "elec_tran_eff", "elec_tran_color", etname, ets, ete, etdir, eten, etdly, eteff, etcol, state.electricityTransportName, state.electricityTransportSegmentStart, state.electricityTransportSegmentEnd, state.electricityTransportDirForward, state.electricityTransportEnabled, state.electricityTransportDelay, state.electricityTransportEffectType, packColorLocal(state.electricityTransportColor));
+        saveBuiltInSegment("stor_pow_name", "stor_pow_s", "stor_pow_e", "stor_pow_dir", "stor_pow_en", "stor_pow_delay", "stor_pow_eff", "stor_pow_color", spname, sps, spe, spdir, spen, spdly, speff, spcol, state.storagePowerstationName, state.storagePowerstationSegmentStart, state.storagePowerstationSegmentEnd, state.storagePowerstationDirForward, state.storagePowerstationEnabled, state.storagePowerstationDelay, state.storagePowerstationEffectType, packColorLocal(state.storagePowerstationColor));
+        if (persistFailed) {
+            sendPersistFailure();
+            return;
+        }
 
     // Update runtime state
         state.windName = wname;
         state.solarName = sname;
-        state.electricityProductionName = epname;
         state.hydrogenTransportName = htname;
         state.hydrogenStorage1Name = hs1name;
         state.hydrogenStorage2Name = hs2name;
         state.h2ConsumptionName = hcname;
         state.fabricationName = fbname;
         state.electricityTransportName = etname;
-        state.storageTransportName = stname;
         state.storagePowerstationName = spname;
         state.windSegmentStart = ws; state.windSegmentEnd = we;
         state.solarSegmentStart = ss; state.solarSegmentEnd = se;
-        state.electricityProductionSegmentStart = eps; state.electricityProductionSegmentEnd = epe;
         state.hydrogenTransportSegmentStart = hts; state.hydrogenTransportSegmentEnd = hte;
         state.hydrogenStorage1SegmentStart = h1s; state.hydrogenStorage1SegmentEnd = h1e;
         state.hydrogenStorage2SegmentStart = h2s; state.hydrogenStorage2SegmentEnd = h2e;
         state.hydrogenConsumptionSegmentStart = hcs; state.hydrogenConsumptionSegmentEnd = hce;
         state.fabricationSegmentStart = fs; state.fabricationSegmentEnd = fe;
         state.electricityTransportSegmentStart = ets; state.electricityTransportSegmentEnd = ete;
-        state.storageTransportSegmentStart = sts; state.storageTransportSegmentEnd = ste;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
         state.ledDataPin = ledDataPin;
-        state.windRelayPin = windRelayPin;
-        state.electrolyserRelayPin = electrolyserRelayPin;
+        if (!ledOnly) {
+            state.windRelayPin = windRelayPin;
+            state.electrolyserRelayPin = electrolyserRelayPin;
+        }
         // Do not reconfigure IO pins while serving this request; apply on reboot for stability.
 
-        // Save all to preferences (directions, enables, and delays too)
-        prefs.putInt("wind_start", ws); prefs.putInt("wind_end", we); prefs.putBool("wind_dir", wdir); prefs.putBool("wind_en", wen); prefs.putInt("wind_delay", wdly);
-        prefs.putInt("solar_start", ss); prefs.putInt("solar_end", se); prefs.putBool("solar_dir", sdir); prefs.putBool("solar_en", sen); prefs.putInt("solar_delay", sdly);
-        prefs.putInt("elec_prod_s", eps); prefs.putInt("elec_prod_e", epe); prefs.putBool("elec_prod_dir", epdir); prefs.putBool("elec_prod_en", epen); prefs.putInt("elec_prod_delay", epdly);
-        prefs.putInt("h2_trans_s", hts); prefs.putInt("h2_trans_e", hte); prefs.putBool("h2_trans_dir", htdir); prefs.putBool("h2_trans_en", hten); prefs.putInt("h2_trans_delay", htdly);
-        prefs.putInt("h2_stor1_s", h1s); prefs.putInt("h2_stor1_e", h1e); prefs.putBool("h2_stor1_dir", h1dir); prefs.putInt("h2_stor1_delay", h1dly);
-        prefs.putInt("h2_stor2_s", h2s); prefs.putInt("h2_stor2_e", h2e); prefs.putBool("h2_stor2_dir", h2dir); prefs.putBool("h2_stor_en", hsen); prefs.putInt("h2_stor2_delay", h2dly);
-        prefs.putInt("h2_cons_s", hcs); prefs.putInt("h2_cons_e", hce); prefs.putBool("h2_cons_dir", hcdir); prefs.putBool("h2_cons_en", hcen); prefs.putInt("h2_cons_delay", hcdly);
-        prefs.putInt("fabr_start", fs); prefs.putInt("fabr_end", fe); prefs.putBool("fabr_en", fben); prefs.putBool("fabr_dir", fbdir); prefs.putInt("fabr_delay", fbdly);
-        prefs.putInt("elec_tran_s", ets); prefs.putInt("elec_tran_e", ete); prefs.putBool("elec_tran_dir", etdir); prefs.putBool("elec_tran_en", eten); prefs.putInt("elec_tran_delay", etdly);
-        prefs.putInt("stor_tran_s", sts); prefs.putInt("stor_tran_e", ste); prefs.putBool("stor_tran_dir", stdir); prefs.putBool("stor_tran_en", sten); prefs.putInt("stor_tran_delay", stdly);
-        prefs.putInt("stor_pow_s", sps); prefs.putInt("stor_pow_e", spe); prefs.putBool("stor_pow_dir", spdir); prefs.putBool("stor_pow_en", spen); prefs.putInt("stor_pow_delay", spdly);
-        // Effect types
-        prefs.putInt("wind_eff", weff);
-        prefs.putInt("solar_eff", seff);
-        prefs.putInt("elec_prod_eff", epeff);
-        prefs.putInt("h2_trans_eff", hteff);
-        prefs.putInt("h2_stor1_eff", h1eff);
-        prefs.putInt("h2_stor2_eff", h2eff);
-        prefs.putInt("h2_cons_eff", hceff);
-        prefs.putInt("elec_tran_eff", eteff);
-        prefs.putInt("stor_tran_eff", steff);
-        prefs.putInt("stor_pow_eff", speff);
-        prefs.putInt("fabr_eff", fbeff);
-        prefs.putBool("electrolyser_en", elyen);
-        // Save colors
-        prefs.putUInt("wind_color", wcol);
-        prefs.putUInt("solar_color", scol);
-        prefs.putUInt("elec_prod_color", epcol);
-        prefs.putUInt("h2_trans_color", htcol);
-        prefs.putUInt("h2_stor1_color", hs1col);
-        prefs.putUInt("h2_stor2_color", hs2col);
-        prefs.putUInt("h2_cons_color", hccol);
-        prefs.putUInt("fabr_color", fbcol);
-        prefs.putUInt("elec_tran_color", etcol);
-        prefs.putUInt("stor_tran_color", stcol);
-        prefs.putUInt("stor_pow_color", spcol);
-
-        programPrefs.putBool("auto_start", autoStart);
-        programPrefs.putUInt(WIND_STOP_KEY, static_cast<uint32_t>(windStopSeconds));
-        programPrefs.putUInt(H2_DELAY_KEY, static_cast<uint32_t>(h2delaySeconds));
-        programPrefs.putUInt("total_leds", static_cast<uint32_t>(newLedCount));
-        prefs.putUInt(WIND_STOP_KEY, windStopSeconds);
-        prefs.putUInt(H2_DELAY_KEY, h2delaySeconds);
-        prefs.putUInt("led_data_pin", ledDataPin);
-        prefs.putUInt("wind_relay_pin", windRelayPin);
-        prefs.putUInt("electrolyser_relay_pin", electrolyserRelayPin);
+        // Save additional non-segment settings.
+        if (!ledOnly) {
+            persist(putBoolRobust(PROGRAM_NAMESPACE, "auto_start", autoStart), "auto_start");
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(PROGRAM_NAMESPACE, WIND_STOP_KEY, static_cast<uint32_t>(windStopSeconds)), WIND_STOP_KEY)) {
+                Serial.println("Failed to persist program wind-stop key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(PROGRAM_NAMESPACE, H2_DELAY_KEY, static_cast<uint32_t>(h2delaySeconds)), H2_DELAY_KEY)) {
+                Serial.println("Failed to persist program H2 delay key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(PROGRAM_NAMESPACE, STORAGE_RUN_KEY, static_cast<uint32_t>(storageRunSeconds)), STORAGE_RUN_KEY)) {
+                Serial.println("Failed to persist program storage-run key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(PROGRAM_NAMESPACE, RESTART_DELAY_KEY, static_cast<uint32_t>(restartDelaySeconds)), RESTART_DELAY_KEY)) {
+                Serial.println("Failed to persist program restart-delay key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+        }
+        persist(putUIntRobust(PROGRAM_NAMESPACE, "total_leds", static_cast<uint32_t>(newLedCount)), "total_leds");
+        if (persistFailed) {
+            sendPersistFailure();
+            return;
+        }
+        if (!ledOnly) {
+            if (!persist(putUIntRobust(LED_CONFIG_NAMESPACE, WIND_STOP_KEY, windStopSeconds), WIND_STOP_KEY)) {
+                Serial.println("Failed to persist led-config wind-stop key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(LED_CONFIG_NAMESPACE, H2_DELAY_KEY, h2delaySeconds), H2_DELAY_KEY)) {
+                Serial.println("Failed to persist led-config H2 delay key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(LED_CONFIG_NAMESPACE, STORAGE_RUN_KEY, storageRunSeconds), STORAGE_RUN_KEY)) {
+                Serial.println("Failed to persist led-config storage-run key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+            if (!persist(putUIntRobust(LED_CONFIG_NAMESPACE, RESTART_DELAY_KEY, restartDelaySeconds), RESTART_DELAY_KEY)) {
+                Serial.println("Failed to persist led-config restart-delay key");
+            }
+            if (persistFailed) {
+                sendPersistFailure();
+                return;
+            }
+        }
+        persist(putIntRobust(LED_CONFIG_NAMESPACE, "led_data_pin", static_cast<int32_t>(ledDataPin)), "led_data_pin");
+        if (!ledOnly) {
+            persist(putIntRobust(LED_CONFIG_NAMESPACE, "wind_relay_pin", static_cast<int32_t>(windRelayPin)), "wind_relay_pin");
+            persist(putIntRobust(LED_CONFIG_NAMESPACE, ELECTROLYSER_RELAY_PIN_KEY, static_cast<int32_t>(electrolyserRelayPin)), ELECTROLYSER_RELAY_PIN_KEY);
+        }
+        if (persistFailed) {
+            sendPersistFailure();
+            return;
+        }
 
         state.totalLeds = newLedCount;
         applyLedCount(state);
@@ -1224,59 +1977,60 @@ void initWebServerSafe() {
         // Update directions in runtime state
         state.windDirForward = wdir;
         state.solarDirForward = sdir;
-        state.electricityProductionDirForward = epdir;
         state.hydrogenTransportDirForward = htdir;
         state.hydrogenStorage1DirForward = h1dir;
         state.hydrogenStorage2DirForward = h2dir;
         state.h2ConsumptionDirForward = hcdir;
         state.electricityTransportDirForward = etdir;
-        state.storageTransportDirForward = stdir;
         state.storagePowerstationDirForward = spdir;
         state.fabricationDirForward = fbdir;
 
         // Update enabled flags in runtime state
         state.windEnabled = wen;
         state.solarEnabled = sen;
-        state.electricityProductionEnabled = epen;
         state.electrolyserEnabled = elyen;
         state.hydrogenTransportEnabled = hten;
         state.hydrogenStorageEnabled = hsen;
         state.h2ConsumptionEnabled = hcen;
         state.fabricationEnabled = fben;
         state.electricityTransportEnabled = eten;
-        state.storageTransportEnabled = sten;
         state.storagePowerstationEnabled = spen;
-        state.autoStartEnabled = autoStart;
-        if (!autoStart) {
-            state.autoStartTriggered = false;
-            state.buttonDisabled = false;
+        // Legacy segments not used in current flow: keep disabled.
+        state.electricityProductionEnabled = false;
+        state.storageTransportEnabled = false;
+        if (!ledOnly) {
+            state.autoStartEnabled = autoStart;
+            if (!autoStart) {
+                state.autoStartTriggered = false;
+                state.buttonDisabled = false;
+            }
         }
 
         // Update delays in runtime state
         state.windDelay = wdly;
         state.solarDelay = sdly;
-        state.electricityProductionDelay = epdly;
         state.hydrogenTransportDelay = htdly;
         state.hydrogenStorage1Delay = h1dly;
         state.hydrogenStorage2Delay = h2dly;
         state.h2ConsumptionDelay = hcdly;
         state.electricityTransportDelay = etdly;
-        state.storageTransportDelay = stdly;
         state.storagePowerstationDelay = spdly;
         state.fabricationDelay = fbdly;
-    state.windStopSeconds = windStopSeconds;
-    state.hydrogenTransportDelaySeconds = h2delaySeconds;
+    if (!ledOnly) {
+        state.windStopSeconds = windStopSeconds;
+        state.hydrogenTransportDelaySeconds = h2delaySeconds;
+        state.storageRunSeconds = storageRunSeconds;
+        state.restartDelaySeconds = restartDelaySeconds;
+    }
 
         // Update effect types in runtime
         state.windEffectType = weff;
         state.solarEffectType = seff;
-        state.electricityProductionEffectType = epeff;
         state.hydrogenTransportEffectType = hteff;
         state.hydrogenStorage1EffectType = h1eff;
         state.hydrogenStorage2EffectType = h2eff;
         state.h2ConsumptionEffectType = hceff;
         state.electricityTransportEffectType = eteff;
-        state.storageTransportEffectType = steff;
         state.storagePowerstationEffectType = speff;
         state.fabricationEffectType = fbeff;
 
@@ -1284,32 +2038,54 @@ void initWebServerSafe() {
         auto unpackColorLocal = [](uint32_t v) -> CRGB { return CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); };
         state.windColor = unpackColorLocal(wcol);
         state.solarColor = unpackColorLocal(scol);
-        state.electricityProductionColor = unpackColorLocal(epcol);
         state.hydrogenTransportColor = unpackColorLocal(htcol);
         state.hydrogenStorage1Color = unpackColorLocal(hs1col);
         state.hydrogenStorage2Color = unpackColorLocal(hs2col);
         state.h2ConsumptionColor = unpackColorLocal(hccol);
         state.fabricationColor = unpackColorLocal(fbcol);
         state.electricityTransportColor = unpackColorLocal(etcol);
-        state.storageTransportColor = unpackColorLocal(stcol);
         state.storagePowerstationColor = unpackColorLocal(spcol);
 
         // Handle custom segments - use the tmpCustoms data already parsed for overlap validation
         for (int i = 0; i < SystemState::MAX_CUSTOM_SEGMENTS; ++i) {
             if (!tmpCustoms[i].present) continue;  // Use tmpCustoms instead of checking state.custom[i].inUse
             auto &t = tmpCustoms[i];
+            auto &cs = state.custom[i];
             // Save prefs
             String p = String("cust") + String(i) + "_";
-            prefs.putString((p+"name").c_str(), t.name);
-            prefs.putInt((p+"s").c_str(), t.s);
-            prefs.putInt((p+"e").c_str(), t.e);
-            prefs.putBool((p+"dir").c_str(), t.dir);
-            prefs.putBool((p+"en").c_str(), t.en);
-            prefs.putInt((p+"delay").c_str(), t.dly);
-            prefs.putInt((p+"eff").c_str(), t.eff);
-            prefs.putUInt((p+"color").c_str(), t.col);
+            if (t.name != cs.name) {
+                persist(putStringRobust(LED_CONFIG_NAMESPACE, (p+"name").c_str(), t.name), (p+"name").c_str());
+                if (persistFailed) break;
+            }
+            if (t.s != cs.start) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, (p+"s").c_str(), t.s), (p+"s").c_str());
+            }
+            if (persistFailed) break;
+            if (t.e != cs.end) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, (p+"e").c_str(), t.e), (p+"e").c_str());
+            }
+            if (persistFailed) break;
+            if (t.dir != cs.dirForward) {
+                persist(putBoolRobust(LED_CONFIG_NAMESPACE, (p+"dir").c_str(), t.dir), (p+"dir").c_str());
+            }
+            if (persistFailed) break;
+            if (t.en != cs.enabled) {
+                persist(putBoolRobust(LED_CONFIG_NAMESPACE, (p+"en").c_str(), t.en), (p+"en").c_str());
+            }
+            if (persistFailed) break;
+            if (t.dly != cs.delay) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, (p+"delay").c_str(), t.dly), (p+"delay").c_str());
+            }
+            if (persistFailed) break;
+            if (t.col != packColorLocal(cs.color)) {
+                persist(putUIntRobust(LED_CONFIG_NAMESPACE, (p+"color").c_str(), t.col), (p+"color").c_str());
+            }
+            if (persistFailed) break;
+            if (t.eff != cs.effectType) {
+                persist(putIntRobust(LED_CONFIG_NAMESPACE, (p+"eff").c_str(), t.eff), (p+"eff").c_str());
+            }
+            if (persistFailed) break;
             // Update runtime
-            auto &cs = state.custom[i];
             cs.name = t.name; 
             cs.start = t.s; 
             cs.end = t.e; 
@@ -1319,22 +2095,136 @@ void initWebServerSafe() {
             cs.effectType = t.eff; 
             cs.color = CRGB((t.col>>16)&0xFF,(t.col>>8)&0xFF,t.col&0xFF);
         }
+        if (persistFailed) {
+            sendPersistFailure();
+            return;
+        }
 
         if (request->hasParam("start_program", true)) {
             state.testMode = false;
             fill_solid(state.leds, state.totalLeds, CRGB::Black);
             FastLED.show();
             resetAllVariables();
+            setRelayWind(false);
+            setRelayElectrolyser(false);
             state.autoStartTriggered = true;
             state.buttonDisabled = true;
             state.generalTimerActive = true;
             timers.generalTimerStartTime = millis();
+            timers.storageProgramStartTime = 0;
+            timers.restartDelayStartTime = 0;
+            state.restartDelayActive = false;
             state.windOn = true;
             state.solarOn = false;
             digitalWrite(state.buttonLedPin, LOW);
         }
 
+        resetNvsRecoveryFlag();
         request->redirect("/");
+    });
+
+    server.on("/update_pins", HTTP_POST, [](AsyncWebServerRequest *request){
+        auto getOutputPin = [&](const char* name, uint8_t &outPin) -> bool {
+            if (!request->hasParam(name, true)) return false;
+            int v = request->getParam(name, true)->value().toInt();
+            if (v < 0 || v > 39) return false;
+            outPin = static_cast<uint8_t>(v);
+            return isSafeOutputGpio(outPin);
+        };
+
+        uint8_t windRelayPin = state.windRelayPin;
+        uint8_t electrolyserRelayPin = state.electrolyserRelayPin;
+        if (!getOutputPin("wind_relay_pin", windRelayPin) ||
+            !getOutputPin("electrolyser_relay_pin", electrolyserRelayPin)) {
+            request->send(400, "text/plain", "Missing or invalid pin settings");
+            return;
+        }
+
+        bool okWind = putIntRobust(LED_CONFIG_NAMESPACE, "wind_relay_pin", static_cast<int32_t>(windRelayPin));
+        bool okEly = putIntRobust(LED_CONFIG_NAMESPACE, ELECTROLYSER_RELAY_PIN_KEY, static_cast<int32_t>(electrolyserRelayPin));
+        if (!(okWind && okEly)) {
+            request->send(500, "text/plain", "Failed to persist pin settings");
+            return;
+        }
+
+        state.windRelayPin = windRelayPin;
+        state.electrolyserRelayPin = electrolyserRelayPin;
+
+        resetNvsRecoveryFlag();
+        request->send(200, "text/plain", "OK");
+    });
+
+    // Update only timing settings (lightweight path to avoid full-form validation failures)
+    server.on("/update_timing", HTTP_POST, [](AsyncWebServerRequest *request){
+        auto getDelaySeconds = [&](const char* name, uint16_t &outSeconds) -> bool {
+            if (!request->hasParam(name, true)) return false;
+            int v = request->getParam(name, true)->value().toInt();
+            if (v < 0 || v > 600) return false;
+            outSeconds = static_cast<uint16_t>(v);
+            return true;
+        };
+
+        uint16_t windStopSeconds = state.windStopSeconds;
+        uint16_t h2delaySeconds = state.hydrogenTransportDelaySeconds;
+        uint16_t storageRunSeconds = state.storageRunSeconds;
+        uint16_t restartDelaySeconds = state.restartDelaySeconds;
+        if (!getDelaySeconds("wind_stop_s", windStopSeconds) ||
+            !getDelaySeconds("h2_trans_delay_s", h2delaySeconds) ||
+            !getDelaySeconds("storage_run_s", storageRunSeconds) ||
+            !getDelaySeconds("restart_delay_s", restartDelaySeconds)) {
+            request->send(400, "text/plain", "Missing or invalid timing parameters");
+            return;
+        }
+
+        state.windStopSeconds = windStopSeconds;
+        state.hydrogenTransportDelaySeconds = h2delaySeconds;
+        state.storageRunSeconds = storageRunSeconds;
+        state.restartDelaySeconds = restartDelaySeconds;
+        String timingFailedKey;
+        auto markTiming = [&](bool ok, const char* key) {
+            if (!ok && timingFailedKey.length() == 0) {
+                timingFailedKey = key;
+            }
+            return ok;
+        };
+        bool okProgramWind = markTiming(putUIntRobust(PROGRAM_NAMESPACE, WIND_STOP_KEY, static_cast<uint32_t>(windStopSeconds)), WIND_STOP_KEY);
+        bool okProgramH2 = markTiming(putUIntRobust(PROGRAM_NAMESPACE, H2_DELAY_KEY, static_cast<uint32_t>(h2delaySeconds)), H2_DELAY_KEY);
+        bool okProgramStorage = markTiming(putUIntRobust(PROGRAM_NAMESPACE, STORAGE_RUN_KEY, static_cast<uint32_t>(storageRunSeconds)), STORAGE_RUN_KEY);
+        bool okProgramRestartDelay = markTiming(putUIntRobust(PROGRAM_NAMESPACE, RESTART_DELAY_KEY, static_cast<uint32_t>(restartDelaySeconds)), RESTART_DELAY_KEY);
+        bool okLedWind = markTiming(putUIntRobust(LED_CONFIG_NAMESPACE, WIND_STOP_KEY, static_cast<uint32_t>(windStopSeconds)), WIND_STOP_KEY);
+        bool okLedH2 = markTiming(putUIntRobust(LED_CONFIG_NAMESPACE, H2_DELAY_KEY, static_cast<uint32_t>(h2delaySeconds)), H2_DELAY_KEY);
+        bool okLedStorage = markTiming(putUIntRobust(LED_CONFIG_NAMESPACE, STORAGE_RUN_KEY, static_cast<uint32_t>(storageRunSeconds)), STORAGE_RUN_KEY);
+        bool okLedRestartDelay = markTiming(putUIntRobust(LED_CONFIG_NAMESPACE, RESTART_DELAY_KEY, static_cast<uint32_t>(restartDelaySeconds)), RESTART_DELAY_KEY);
+
+        if (!(okProgramWind && okProgramH2 && okProgramStorage && okProgramRestartDelay && okLedWind && okLedH2 && okLedStorage && okLedRestartDelay)) {
+            String msg = String("Failed to persist timing settings at key: ") + (timingFailedKey.length() ? timingFailedKey : String("unknown"));
+            request->send(500, "text/plain", msg);
+            return;
+        }
+
+        resetNvsRecoveryFlag();
+        request->send(200, "text/plain", "OK");
+    });
+
+    // Program-tab test start: starts a full-strip test without request parameters.
+    server.on("/start_test_all", HTTP_POST, [](AsyncWebServerRequest *request){
+        int end = state.totalLeds > 0 ? state.totalLeds - 1 : 0;
+
+        state.testMode = true;
+        state.testSegmentStart = 0;
+        state.testSegmentEnd = end;
+        state.testSegmentIndex = -1; // force test re-initialize
+        state.testDirForward = true;
+        state.testEffectType = 0;
+        state.testColor = CRGB::White;
+        state.testDelay = 40;
+        state.testPhase = 0;
+        state.testPhaseStartTime = millis();
+
+        fill_solid(state.leds, state.totalLeds, CRGB::Black);
+        FastLED.show();
+
+        request->send(200, "text/plain", "OK");
     });
 
     // Test handler - starts test mode for a segment
@@ -1402,16 +2292,74 @@ void initWebServerSafe() {
         request->redirect("/");
     });
 
+    // Relay control handler - supports manual ON/OFF and return to automatic relay logic.
+    server.on("/set_relay", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!request->hasParam("relay", true) || !request->hasParam("state", true)) {
+            request->send(400, "text/plain", "Missing parameters");
+            return;
+        }
+
+        String relay = request->getParam("relay", true)->value();
+        String stateVal = request->getParam("state", true)->value();
+
+        if (relay == "auto") {
+            state.relayManualMode = false;
+            request->send(200, "text/plain", "Auto relay mode enabled");
+            return;
+        }
+
+        if (!request->hasParam("pin", true)) {
+            request->send(400, "text/plain", "Missing pin");
+            return;
+        }
+        if (relay != "wind" && relay != "electrolyser") {
+            request->send(400, "text/plain", "Invalid relay");
+            return;
+        }
+        if (stateVal != "on" && stateVal != "off") {
+            request->send(400, "text/plain", "Invalid state");
+            return;
+        }
+
+        int pinInt = request->getParam("pin", true)->value().toInt();
+        if (pinInt < 0 || pinInt > 39) {
+            request->send(400, "text/plain", "Invalid pin");
+            return;
+        }
+        uint8_t pin = static_cast<uint8_t>(pinInt);
+        if (!isSafeOutputGpio(pin)) {
+            request->send(400, "text/plain", "Pin is not safe for relay output");
+            return;
+        }
+
+        bool on = (stateVal == "on");
+        state.relayManualMode = true;
+        if (relay == "wind") {
+            state.manualWindRelayOn = on;
+            setRelayWind(on);
+        } else {
+            state.manualElectrolyserRelayOn = on;
+            setRelayElectrolyser(on);
+        }
+
+        request->send(200, "text/plain", "Relay state updated");
+    });
+
     // Start the process chain directly from the web UI
     server.on("/start_chain", HTTP_POST, [](AsyncWebServerRequest *request){
         state.testMode = false;
         fill_solid(state.leds, state.totalLeds, CRGB::Black);
         FastLED.show();
         resetAllVariables();
+        setRelayWind(false);
+        setRelayElectrolyser(false);
         state.autoStartTriggered = true;
         state.buttonDisabled = true;
         state.generalTimerActive = true;
         timers.generalTimerStartTime = millis();
+        timers.storageProgramStartTime = 0;
+        timers.restartDelayStartTime = 0;
+        state.restartDelayActive = false;
         state.windOn = true;
         digitalWrite(state.buttonLedPin, LOW);
         request->redirect("/");
@@ -1423,10 +2371,15 @@ void initWebServerSafe() {
         fill_solid(state.leds, state.totalLeds, CRGB::Black);
         FastLED.show();
         resetAllVariables();
+        setRelayWind(false);
+        setRelayElectrolyser(false);
         state.autoStartTriggered = true;
         state.buttonDisabled = true;
         state.generalTimerActive = true;
         timers.generalTimerStartTime = millis();
+        timers.storageProgramStartTime = 0;
+        timers.restartDelayStartTime = 0;
+        state.restartDelayActive = false;
         state.windOn = true;
         state.solarOn = false;
         digitalWrite(state.buttonLedPin, LOW);
