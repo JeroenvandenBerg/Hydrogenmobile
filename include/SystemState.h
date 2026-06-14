@@ -192,6 +192,7 @@ struct SystemState {
     bool fabricationDirForward = true;
 
     // Per-segment LED animation delays (milliseconds)
+    int brightnessDivisor = 1; // Dimming divisor used for trail/secondary brightness (1 = 100%)
     int windDelay = LED_DELAY;
     int solarDelay = LED_DELAY;
     int electricityProductionDelay = LED_DELAY;

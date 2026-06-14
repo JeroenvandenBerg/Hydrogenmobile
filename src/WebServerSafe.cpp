@@ -27,6 +27,7 @@ static constexpr const char* H2_DELAY_KEY_LEGACY = "h2_trans_delay_s";
 static constexpr const char* WIND_STOP_KEY = "w_stop_s";
 static constexpr const char* STORAGE_RUN_KEY = "st_run_s";
 static constexpr const char* RESTART_DELAY_KEY = "rst_dly_s";
+static constexpr const char* BRIGHTNESS_DIVISOR_KEY = "bri_div";
 static constexpr const char* ELECTROLYSER_RELAY_PIN_KEY = "ely_rel_pin"; // NVS keys must be <= 15 chars
 
 static Preferences* resolveGlobalPrefsHandle(const char* ns) {
@@ -638,6 +639,10 @@ void initWebServerSafe() {
     loadSegment("wind_start", "wind_end", WIND_LED_START, WIND_LED_END, state.windSegmentStart, state.windSegmentEnd);
     loadSegment("solar_start", "solar_end", SOLAR_LED_START, SOLAR_LED_END, state.solarSegmentStart, state.solarSegmentEnd);
     loadSegment("h2_prod_s", "h2_prod_e", HYDROGEN_PRODUCTION_LED_START, HYDROGEN_PRODUCTION_LED_END, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+    if (state.hydrogenProductionSegmentStart == 17 && state.hydrogenProductionSegmentEnd == 22) {
+        state.hydrogenProductionSegmentStart = HYDROGEN_PRODUCTION_LED_START;
+        state.hydrogenProductionSegmentEnd = HYDROGEN_PRODUCTION_LED_END;
+    }
     loadSegment("h2_trans_s", "h2_trans_e", HYDROGEN_TRANSPORT_LED_START, HYDROGEN_TRANSPORT_LED_END, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
     loadSegment("h2_stor1_s", "h2_stor1_e", HYDROGEN_STORAGE1_LED_START, HYDROGEN_STORAGE1_LED_END, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd);
     loadSegment("h2_stor2_s", "h2_stor2_e", HYDROGEN_STORAGE2_LED_START, HYDROGEN_STORAGE2_LED_END, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd);
@@ -673,6 +678,10 @@ void initWebServerSafe() {
     state.storageTransportEnabled = false;
 
     // Load delays
+    state.brightnessDivisor = prefs.getInt(BRIGHTNESS_DIVISOR_KEY, 1);
+    if (state.brightnessDivisor < 1) state.brightnessDivisor = 1;
+    if (state.brightnessDivisor > 10) state.brightnessDivisor = 10;
+
     state.windDelay = loadDelay("wind_delay", LED_DELAY);
     state.solarDelay = loadDelay("solar_delay", LED_DELAY);
     state.hydrogenTransportDelay = loadDelay("h2_trans_delay", LED_DELAY);
@@ -1030,10 +1039,15 @@ void initWebServerSafe() {
     page += "<div class='segment'><b>LED Settings</b><br>"
         "LED data pin: <input type='number' name='led_data_pin' min='0' max='39' value='" + String(state.ledDataPin) + "' style='width:70px;'><br>"
         "Total LEDs connected: <input type='number' name='total_leds' min='1' max='" + String(NUM_LEDS) + "' value='" + String(state.totalLeds) + "'>"
+        "<br>Brightness divisor: <input id='brightness_divisor' type='range' name='brightness_divisor' min='1' max='10' value='" + String(state.brightnessDivisor) + "' oninput=\"updateBrightnessDivisorValue(this.value)\" style='width:220px;vertical-align:middle;'>"
+        " <span id='brightness_divisor_value'>" + String(state.brightnessDivisor) + "</span>"
+        "<br><small style='display:inline-block;width:220px;'><span style='float:left;'>1 = Geen dim</span><span style='float:right;'>10 = Sterk gedimd</span></small>"
+        "<br><small>1 = 100% running brightness (head blijft altijd 100%).</small>"
         "<br><small>LED data pin is applied after restart.</small>"
         "</div>";
     addSegmentDir(state.windName.c_str(), "wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", state.windColor, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType);
     addSegmentDir(state.solarName.c_str(), "solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", state.solarColor, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType);
+    addSegmentDir(state.hydrogenProductionName.c_str(), "h2_prod_name", "h2_prod_s", "h2_prod_e", "h2_prod_dir", "h2_prod_en", "h2_prod_delay", "h2_prod_eff", "h2_prod_color", state.hydrogenProductionColor, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionDirForward, state.hydrogenProductionEnabled, state.hydrogenProductionDelay, state.hydrogenProductionEffectType);
     addSegmentDir(state.hydrogenTransportName.c_str(), "h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", state.hydrogenTransportColor, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType);
     addSegmentDir(state.hydrogenStorage1Name.c_str(), "h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", state.hydrogenStorage1Color, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType);
     addSegmentDir(state.hydrogenStorage2Name.c_str(), "h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", state.hydrogenStorage2Color, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType);
@@ -1095,6 +1109,7 @@ void initWebServerSafe() {
         page += "<div class='segment'><b>Segment Status</b>";
         page += "<div class='status-row'><span>" + state.windName + "</span>" + statusBadgeWithId(state.windEnabled && state.windOn, "st_wind") + "</div>";
         page += "<div class='status-row'><span>" + state.solarName + "</span>" + statusBadgeWithId(state.solarEnabled && state.solarOn, "st_solar") + "</div>";
+        page += "<div class='status-row'><span>" + state.hydrogenProductionName + "</span>" + statusBadgeWithId(state.hydrogenProductionEnabled && state.hydrogenProductionOn, "st_h2_production") + "</div>";
         page += "<div class='status-row'><span>" + state.hydrogenTransportName + "</span>" + statusBadgeWithId(state.hydrogenTransportEnabled && state.hydrogenTransportOn, "st_h2_transport") + "</div>";
         page += "<div class='status-row'><span>" + state.hydrogenStorage1Name + "</span>" + statusBadgeWithId(state.hydrogenStorageEnabled && state.hydrogenStorageInOn, "st_h2_storage_in") + "</div>";
         page += "<div class='status-row'><span>" + state.hydrogenStorage2Name + "</span>" + statusBadgeWithId(state.hydrogenStorageEnabled && state.hydrogenStorageOutOn, "st_h2_storage_out") + "</div>";
@@ -1127,6 +1142,10 @@ void initWebServerSafe() {
             "  if(panel) panel.classList.add('active');\n"
             "  if(btn) btn.classList.add('active');\n"
             "}\n"
+            "function updateBrightnessDivisorValue(v){\n"
+            "  const el=document.getElementById('brightness_divisor_value');\n"
+            "  if(el) el.textContent = String(v);\n"
+            "}\n"
             "function setStatusBadge(id,on){\n"
             "  const el=document.getElementById(id);\n"
             "  if(!el) return;\n"
@@ -1149,6 +1168,7 @@ void initWebServerSafe() {
             "      setStatusBadge('st_test_mode', s.test_mode);\n"
             "      setStatusBadge('st_wind', s.wind);\n"
             "      setStatusBadge('st_solar', s.solar);\n"
+            "      setStatusBadge('st_h2_production', s.h2_production);\n"
             "      setStatusBadge('st_h2_transport', s.h2_transport);\n"
             "      setStatusBadge('st_h2_storage_in', s.h2_storage_in);\n"
             "      setStatusBadge('st_h2_storage_out', s.h2_storage_out);\n"
@@ -1276,6 +1296,8 @@ void initWebServerSafe() {
             "    .then(()=>window.location.reload())\n"
             "    .catch(e=>alert(e.message || 'Timing save failed'));\n"
             "}\n"
+            "const bd=document.getElementById('brightness_divisor');\n"
+            "if(bd) updateBrightnessDivisorValue(bd.value);\n"
             
             "</script>"
             "<form method='POST' action='/restart' onsubmit=\"return confirm('Restart the device?')\">"
@@ -1424,6 +1446,7 @@ void initWebServerSafe() {
             addBool("test_mode", state.testMode);
             addBool("wind", state.windEnabled && state.windOn);
             addBool("solar", state.solarEnabled && state.solarOn);
+            addBool("h2_production", state.hydrogenProductionEnabled && state.hydrogenProductionOn);
             addBool("h2_transport", state.hydrogenTransportEnabled && state.hydrogenTransportOn);
             addBool("h2_storage_in", state.hydrogenStorageEnabled && state.hydrogenStorageInOn);
             addBool("h2_storage_out", state.hydrogenStorageEnabled && state.hydrogenStorageOutOn);
@@ -1611,15 +1634,24 @@ void initWebServerSafe() {
             }
         };
 
-    int ws, we, ss, se, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sps, spe;
-    bool wdir, sdir, htdir, h1dir, h2dir, hcdir, etdir, spdir, fbdir;
-    int wdly, sdly, htdly, h1dly, h2dly, hcdly, etdly, spdly, fbdly;
-    int weff, seff, hteff, h1eff, h2eff, hceff, eteff, speff;
+    int ws, we, ss, se, hps, hpe, hts, hte, h1s, h1e, h2s, h2e, hcs, hce, fs, fe, ets, ete, sps, spe;
+    bool wdir, sdir, hpdir, htdir, h1dir, h2dir, hcdir, etdir, spdir, fbdir;
+    int wdly, sdly, hpdly, htdly, h1dly, h2dly, hcdly, etdly, spdly, fbdly;
+    int weff, seff, hpeff, hteff, h1eff, h2eff, hceff, eteff, speff;
     int fbeff; // fabrication effect
     uint8_t ledDataPin, windRelayPin, electrolyserRelayPin;
-    uint32_t wcol, scol, htcol, hs1col, hs2col, hccol, fbcol, etcol, spcol;
-    String wname, sname, htname, hs1name, hs2name, hcname, fbname, etname, spname;
+    uint32_t wcol, scol, hpcol, htcol, hs1col, hs2col, hccol, fbcol, etcol, spcol;
+    String wname, sname, hpname, htname, hs1name, hs2name, hcname, fbname, etname, spname;
     uint16_t h2delaySeconds, windStopSeconds, storageRunSeconds, restartDelaySeconds;
+    int brightnessDivisor = state.brightnessDivisor;
+
+        if (request->hasParam("brightness_divisor", true)) {
+            brightnessDivisor = request->getParam("brightness_divisor", true)->value().toInt();
+            if (brightnessDivisor < 1 || brightnessDivisor > 10) {
+                request->send(400, "text/plain", "Invalid brightness divisor");
+                return;
+            }
+        }
 
         hts = state.hydrogenTransportSegmentStart;
         hte = state.hydrogenTransportSegmentEnd;
@@ -1631,6 +1663,8 @@ void initWebServerSafe() {
         
         if (!getSegment("wind_start", "wind_end", ws, we) ||
             !getSegment("solar_start", "solar_end", ss, se) ||
+            !getSegment("h2_prod_s", "h2_prod_e", hps, hpe) ||
+            !getSegment("h2_trans_s", "h2_trans_e", hts, hte) ||
             !getSegment("h2_stor1_s", "h2_stor1_e", h1s, h1e) ||
             !getSegment("h2_stor2_s", "h2_stor2_e", h2s, h2e) ||
             !getSegment("h2_cons_s", "h2_cons_e", hcs, hce) ||
@@ -1639,6 +1673,8 @@ void initWebServerSafe() {
             !getSegment("stor_pow_s", "stor_pow_e", sps, spe) ||
             !getDir("wind_dir", wdir) ||
             !getDir("solar_dir", sdir) ||
+            !getDir("h2_prod_dir", hpdir) ||
+            !getDir("h2_trans_dir", htdir) ||
             !getDir("h2_stor1_dir", h1dir) ||
             !getDir("h2_stor2_dir", h2dir) ||
             !getDir("h2_cons_dir", hcdir) ||
@@ -1647,6 +1683,8 @@ void initWebServerSafe() {
             !getDir("fabr_dir", fbdir) ||
             !getEffect3("wind_eff", weff) ||
             !getEffect3("solar_eff", seff) ||
+            !getEffect3("h2_prod_eff", hpeff) ||
+            !getEffect3("h2_trans_eff", hteff) ||
             !getEffect3("h2_stor1_eff", h1eff) ||
             !getEffect3("h2_stor2_eff", h2eff) ||
             !getEffect3("h2_cons_eff", hceff) ||
@@ -1659,6 +1697,8 @@ void initWebServerSafe() {
             // Colors must be present when saving
             !request->hasParam("wind_color", true) ||
             !request->hasParam("solar_color", true) ||
+            !request->hasParam("h2_prod_color", true) ||
+            !request->hasParam("h2_trans_color", true) ||
             !request->hasParam("h2_stor1_color", true) ||
             !request->hasParam("h2_stor2_color", true) ||
             !request->hasParam("h2_cons_color", true) ||
@@ -1667,6 +1707,8 @@ void initWebServerSafe() {
             !request->hasParam("stor_pow_color", true) ||
             !getDelay("wind_delay", wdly) ||
             !getDelay("solar_delay", sdly) ||
+            !getDelay("h2_prod_delay", hpdly) ||
+            !getDelay("h2_trans_delay", htdly) ||
             !getDelay("h2_stor1_delay", h1dly) ||
             !getDelay("h2_stor2_delay", h2dly) ||
             !getDelay("h2_cons_delay", hcdly) ||
@@ -1679,6 +1721,8 @@ void initWebServerSafe() {
             !getDelaySeconds("restart_delay_s", restartDelaySeconds) ||
             !getName("wind_name", wname) ||
             !getName("solar_name", sname) ||
+            !getName("h2_prod_name", hpname) ||
+            !getName("h2_trans_name", htname) ||
             !getName("h2_stor1_name", hs1name) ||
             !getName("h2_stor2_name", hs2name) ||
             !getName("h2_cons_name", hcname) ||
@@ -1700,6 +1744,8 @@ void initWebServerSafe() {
         };
         if (!parseHexColor("wind_color", wcol) ||
             !parseHexColor("solar_color", scol) ||
+            !parseHexColor("h2_prod_color", hpcol) ||
+            !parseHexColor("h2_trans_color", htcol) ||
             !parseHexColor("h2_stor1_color", hs1col) ||
             !parseHexColor("h2_stor2_color", hs2col) ||
             !parseHexColor("h2_cons_color", hccol) ||
@@ -1713,6 +1759,7 @@ void initWebServerSafe() {
         // Checkboxes (missing means false)
         bool wen  = getCheckbox("wind_en");
         bool sen  = getCheckbox("solar_en");
+        bool hpen = getCheckbox("h2_prod_en");
         bool hten = getCheckbox("h2_trans_en");
         bool hsen = getCheckbox("h2_stor_en");
         bool hcen = getCheckbox("h2_cons_en");
@@ -1831,7 +1878,6 @@ void initWebServerSafe() {
                 persist(putIntRobust(LED_CONFIG_NAMESPACE, endKey, end), endKey);
             }
             if (persistFailed) return;
-            if (!en) return;
             if (dir != curDir) {
                 persist(putBoolRobust(LED_CONFIG_NAMESPACE, dirKey, dir), dirKey);
             }
@@ -1852,6 +1898,7 @@ void initWebServerSafe() {
 
         saveBuiltInSegment("wind_name", "wind_start", "wind_end", "wind_dir", "wind_en", "wind_delay", "wind_eff", "wind_color", wname, ws, we, wdir, wen, wdly, weff, wcol, state.windName, state.windSegmentStart, state.windSegmentEnd, state.windDirForward, state.windEnabled, state.windDelay, state.windEffectType, packColorLocal(state.windColor));
         saveBuiltInSegment("solar_name", "solar_start", "solar_end", "solar_dir", "solar_en", "solar_delay", "solar_eff", "solar_color", sname, ss, se, sdir, sen, sdly, seff, scol, state.solarName, state.solarSegmentStart, state.solarSegmentEnd, state.solarDirForward, state.solarEnabled, state.solarDelay, state.solarEffectType, packColorLocal(state.solarColor));
+        saveBuiltInSegment("h2_prod_name", "h2_prod_s", "h2_prod_e", "h2_prod_dir", "h2_prod_en", "h2_prod_delay", "h2_prod_eff", "h2_prod_color", hpname, hps, hpe, hpdir, hpen, hpdly, hpeff, hpcol, state.hydrogenProductionName, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd, state.hydrogenProductionDirForward, state.hydrogenProductionEnabled, state.hydrogenProductionDelay, state.hydrogenProductionEffectType, packColorLocal(state.hydrogenProductionColor));
         saveBuiltInSegment("h2_trans_name", "h2_trans_s", "h2_trans_e", "h2_trans_dir", "h2_trans_en", "h2_trans_delay", "h2_trans_eff", "h2_trans_color", htname, hts, hte, htdir, hten, htdly, hteff, htcol, state.hydrogenTransportName, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd, state.hydrogenTransportDirForward, state.hydrogenTransportEnabled, state.hydrogenTransportDelay, state.hydrogenTransportEffectType, packColorLocal(state.hydrogenTransportColor));
         saveBuiltInSegment("h2_stor1_name", "h2_stor1_s", "h2_stor1_e", "h2_stor1_dir", "h2_stor_en", "h2_stor1_delay", "h2_stor1_eff", "h2_stor1_color", hs1name, h1s, h1e, h1dir, hsen, h1dly, h1eff, hs1col, state.hydrogenStorage1Name, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd, state.hydrogenStorage1DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage1Delay, state.hydrogenStorage1EffectType, packColorLocal(state.hydrogenStorage1Color));
         saveBuiltInSegment("h2_stor2_name", "h2_stor2_s", "h2_stor2_e", "h2_stor2_dir", "h2_stor_en", "h2_stor2_delay", "h2_stor2_eff", "h2_stor2_color", hs2name, h2s, h2e, h2dir, hsen, h2dly, h2eff, hs2col, state.hydrogenStorage2Name, state.hydrogenStorage2SegmentStart, state.hydrogenStorage2SegmentEnd, state.hydrogenStorage2DirForward, state.hydrogenStorageEnabled, state.hydrogenStorage2Delay, state.hydrogenStorage2EffectType, packColorLocal(state.hydrogenStorage2Color));
@@ -1867,6 +1914,7 @@ void initWebServerSafe() {
     // Update runtime state
         state.windName = wname;
         state.solarName = sname;
+        state.hydrogenProductionName = hpname;
         state.hydrogenTransportName = htname;
         state.hydrogenStorage1Name = hs1name;
         state.hydrogenStorage2Name = hs2name;
@@ -1876,6 +1924,12 @@ void initWebServerSafe() {
         state.storagePowerstationName = spname;
         state.windSegmentStart = ws; state.windSegmentEnd = we;
         state.solarSegmentStart = ss; state.solarSegmentEnd = se;
+        state.hydrogenProductionSegmentStart = hps; state.hydrogenProductionSegmentEnd = hpe;
+        state.hydrogenProductionEnabled = hpen;
+        state.hydrogenProductionDirForward = hpdir;
+        state.hydrogenProductionDelay = hpdly;
+        state.hydrogenProductionEffectType = hpeff;
+        state.hydrogenProductionColor = CRGB((hpcol >> 16) & 0xFF, (hpcol >> 8) & 0xFF, hpcol & 0xFF);
         state.hydrogenTransportSegmentStart = hts; state.hydrogenTransportSegmentEnd = hte;
         state.hydrogenStorage1SegmentStart = h1s; state.hydrogenStorage1SegmentEnd = h1e;
         state.hydrogenStorage2SegmentStart = h2s; state.hydrogenStorage2SegmentEnd = h2e;
@@ -1883,6 +1937,7 @@ void initWebServerSafe() {
         state.fabricationSegmentStart = fs; state.fabricationSegmentEnd = fe;
         state.electricityTransportSegmentStart = ets; state.electricityTransportSegmentEnd = ete;
         state.storagePowerstationSegmentStart = sps; state.storagePowerstationSegmentEnd = spe;
+        state.brightnessDivisor = brightnessDivisor;
         state.ledDataPin = ledDataPin;
         if (!ledOnly) {
             state.windRelayPin = windRelayPin;
@@ -1927,6 +1982,11 @@ void initWebServerSafe() {
             }
         }
         persist(putUIntRobust(PROGRAM_NAMESPACE, "total_leds", static_cast<uint32_t>(newLedCount)), "total_leds");
+        if (persistFailed) {
+            sendPersistFailure();
+            return;
+        }
+        persist(putIntRobust(LED_CONFIG_NAMESPACE, BRIGHTNESS_DIVISOR_KEY, brightnessDivisor), BRIGHTNESS_DIVISOR_KEY);
         if (persistFailed) {
             sendPersistFailure();
             return;

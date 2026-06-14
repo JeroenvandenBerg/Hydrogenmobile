@@ -1,12 +1,23 @@
 #include "fireEffect.h"
 
+namespace {
+constexpr int FIRE_HEAT_MAX = 2048;
+}
+
 // Fire effect function
 void fireEffect(CRGB* leds, int startLed, int endLed) {
-    static uint8_t heat[256];  // Array to store heat values for each LED
+    static uint8_t heat[FIRE_HEAT_MAX];  // Array to store heat values for each LED index
     static uint32_t previousMillis = 0;  // Stores the last update time
     const uint8_t cooling = 55;         // Default cooling value
     const uint8_t sparking = 120;       // Default sparking value
     const uint32_t wait = 50;           // Default wait time in milliseconds
+
+    if (leds == nullptr) return;
+    if (startLed < 0) startLed = 0;
+    if (endLed >= FIRE_HEAT_MAX) endLed = FIRE_HEAT_MAX - 1;
+    if (startLed > endLed) return;
+
+    const int segmentLen = endLed - startLed + 1;
 
     uint32_t currentMillis = millis();
 
@@ -16,7 +27,7 @@ void fireEffect(CRGB* leds, int startLed, int endLed) {
 
         // Step 1: Cool down every cell a little
         for (int i = startLed; i <= endLed; i++) {
-            heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / (endLed - startLed + 1)) + 2));
+            heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / segmentLen) + 2));
         }
 
         // Step 2: Heat from each cell drifts 'up' and diffuses a little
@@ -26,7 +37,8 @@ void fireEffect(CRGB* leds, int startLed, int endLed) {
 
         // Step 3: Randomly ignite new sparks near the bottom
         if (random8() < sparking) {
-            int y = random8(startLed, startLed + 7);
+            int sparkSpan = segmentLen < 7 ? segmentLen : 7;
+            int y = startLed + random8(sparkSpan);
             heat[y] = qadd8(heat[y], random8(160, 255));
         }
 

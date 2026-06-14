@@ -1,5 +1,5 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef HYDROFGEN_CONFIG_H
+#define HYDROFGEN_CONFIG_H
 
 #include <FastLED.h>
 
@@ -18,13 +18,13 @@
 #define ELECTRICITY_PRODUCTION_LED_START 12
 #define ELECTRICITY_PRODUCTION_LED_END 16
 
-// hydrogen from electrolyser
-#define HYDROGEN_PRODUCTION_LED_START 17
-#define HYDROGEN_PRODUCTION_LED_END 22
+// hydrogen production segment at the end of the strip
+#define HYDROGEN_PRODUCTION_LED_START 150
+#define HYDROGEN_PRODUCTION_LED_END 155
 //hudrogen transport segment with MID used to trigger consumption
-#define HYDROGEN_TRANSPORT_LED_START 23
-#define HYDROGEN_TRANSPORT_LED_MID 28
-#define HYDROGEN_TRANSPORT_LED_END 29
+#define HYDROGEN_TRANSPORT_LED_START 136
+#define HYDROGEN_TRANSPORT_LED_MID 142
+#define HYDROGEN_TRANSPORT_LED_END 149
 
 //hydrogen storage segments
 #define HYDROGEN_STORAGE1_LED_START 34

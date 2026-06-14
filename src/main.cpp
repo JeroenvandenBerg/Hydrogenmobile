@@ -32,6 +32,11 @@ void runTestMode();
 void startProgramAuto();
 bool runWindStopDrainSequence();
 
+static inline CRGB dimColor(const CRGB &color, int divisor) {
+    int d = divisor < 1 ? 1 : divisor;
+    return CRGB(color.r / d, color.g / d, color.b / d);
+}
+
 // ========================== Setup & Loop ==========================
 void setup() {
     Serial.begin(115200);
@@ -99,16 +104,8 @@ bool runWindStopDrainSequence() {
         return false;
     }
 
-    const CRGB h2TransportDim(
-        state.hydrogenTransportColor.r / 10,
-        state.hydrogenTransportColor.g / 10,
-        state.hydrogenTransportColor.b / 10
-    );
-    const CRGB storageInDim(
-        state.hydrogenStorage1Color.r / 10,
-        state.hydrogenStorage1Color.g / 10,
-        state.hydrogenStorage1Color.b / 10
-    );
+    const CRGB h2TransportDim = dimColor(state.hydrogenTransportColor, state.brightnessDivisor);
+    const CRGB storageInDim = dimColor(state.hydrogenStorage1Color, state.brightnessDivisor);
 
     if (!state.pipeEmpty) {
         fill_solid(
@@ -140,35 +137,25 @@ bool runWindStopDrainSequence() {
 
     // Drain Hydrogen Transport first.
     if (state.hydrogenTransportOn) {
-        EffectUtils::advanceIndexDir(
-            state.hydrogenTransportDelay,
-            state.hydrogenTransportSegmentStart,
-            state.hydrogenTransportSegmentEnd,
-            state.hydrogenTransportDirForward,
-            state.hydrogenTransportSegment,
-            timers.previousMillisHydrogenTransport,
-            state.firstRunHydrogenTransport
-        );
         setPixelSafe(state, state.hydrogenTransportSegment, CRGB::Black);
-
         if (state.hydrogenTransportSegment ==
             EffectUtils::terminalBound(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd)) {
             state.hydrogenTransportOn = false;
             state.firstRunHydrogenTransport = true;
+        } else {
+            EffectUtils::advanceIndexDir(
+                state.hydrogenTransportDelay,
+                state.hydrogenTransportSegmentStart,
+                state.hydrogenTransportSegmentEnd,
+                state.hydrogenTransportDirForward,
+                state.hydrogenTransportSegment,
+                timers.previousMillisHydrogenTransport,
+                state.firstRunHydrogenTransport
+            );
         }
     } else if (state.hydrogenStorageInOn) {
         // After transport is fully drained, drain Storage In.
-        EffectUtils::advanceIndexDir(
-            state.hydrogenStorage1Delay,
-            state.hydrogenStorage1SegmentStart,
-            state.hydrogenStorage1SegmentEnd,
-            state.hydrogenStorage1DirForward,
-            state.hydrogenStorageSegment1,
-            timers.previousMillisHydrogenStorage,
-            state.firstRunHydrogenStorage
-        );
         setPixelSafe(state, state.hydrogenStorageSegment1, CRGB::Black);
-
         if (state.hydrogenStorageSegment1 ==
             EffectUtils::terminalBound(state.hydrogenStorage1DirForward, state.hydrogenStorage1SegmentStart, state.hydrogenStorage1SegmentEnd)) {
             state.hydrogenStorageInOn = false;
@@ -176,6 +163,16 @@ bool runWindStopDrainSequence() {
             state.emptyPipe = false;
             state.pipeEmpty = false;
             state.firstRunHydrogenStorage = true;
+        } else {
+            EffectUtils::advanceIndexDir(
+                state.hydrogenStorage1Delay,
+                state.hydrogenStorage1SegmentStart,
+                state.hydrogenStorage1SegmentEnd,
+                state.hydrogenStorage1DirForward,
+                state.hydrogenStorageSegment1,
+                timers.previousMillisHydrogenStorage,
+                state.firstRunHydrogenStorage
+            );
         }
     }
 
@@ -190,7 +187,7 @@ void updateHydrogenFromRenewablesProgram() {
         return;
     }
 
-    if (!state.windOn && !state.solarOn && !state.hydrogenTransportOn && !state.hydrogenStorageInOn && !state.hydrogenStorageOutOn && !state.h2ConsumptionOn) {
+    if (!state.windOn && !state.solarOn && !state.hydrogenProductionOn && !state.hydrogenTransportOn && !state.hydrogenStorageInOn && !state.hydrogenStorageOutOn && !state.h2ConsumptionOn) {
         if (state.totalLeds > 0) {
             fill_solid(state.leds, state.totalLeds, CRGB::Black);
         }
@@ -207,7 +204,7 @@ void updateHydrogenFromRenewablesProgram() {
             state.windSegmentStart,
             state.windSegmentEnd,
             state.windColor,
-            CRGB(state.windColor.r / 10, state.windColor.g / 10, state.windColor.b / 10),
+            dimColor(state.windColor, state.brightnessDivisor),
             state.windDelay,
             state.windSegment,
             timers.previousMillisWind,
@@ -234,7 +231,7 @@ void updateHydrogenFromRenewablesProgram() {
             state.solarSegmentStart,
             state.solarSegmentEnd,
             state.solarColor,
-            CRGB(state.solarColor.r / 10, state.solarColor.g / 10, state.solarColor.b / 10),
+            dimColor(state.solarColor, state.brightnessDivisor),
             state.solarDelay,
             state.solarSegment,
             timers.previousMillisSolar,
@@ -247,12 +244,16 @@ void updateHydrogenFromRenewablesProgram() {
         // Only arm Hydrogen Transport once before downstream states become active.
         if (solarReachedTerminal && !state.hydrogenTransportDelayActive && !state.hydrogenTransportOn &&
             !state.hydrogenStorageInOn && !state.hydrogenStorageOutOn && !state.h2ConsumptionOn && !state.fabricationOn) {
+            // Electrolyser should start only after Solar reaches its terminal LED.
+            state.electrolyserOn = true;
             timers.previousMillisElectrolyser = millis();
             if (state.hydrogenTransportDelaySeconds == 0) {
                 state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+                state.hydrogenProductionOn = state.hydrogenProductionEnabled;
                 state.hydrogenTransportDelayActive = false;
             } else {
                 state.hydrogenTransportOn = false;
+                state.hydrogenProductionOn = false;
                 state.hydrogenTransportDelayActive = true;
             }
         }
@@ -267,6 +268,7 @@ void updateHydrogenFromRenewablesProgram() {
         if (elapsed >= required) {
             state.hydrogenTransportDelayActive = false;
             state.hydrogenTransportOn = state.hydrogenTransportEnabled;
+            state.hydrogenProductionOn = state.hydrogenProductionEnabled;
         }
     }
 
@@ -279,7 +281,7 @@ void updateHydrogenFromRenewablesProgram() {
             state.hydrogenTransportSegmentStart,
             state.hydrogenTransportSegmentEnd,
             state.hydrogenTransportColor,
-            CRGB(state.hydrogenTransportColor.r / 10, state.hydrogenTransportColor.g / 10, state.hydrogenTransportColor.b / 10),
+            dimColor(state.hydrogenTransportColor, state.brightnessDivisor),
             state.hydrogenTransportDelay,
             state.hydrogenTransportSegment,
             timers.previousMillisHydrogenTransport,
@@ -300,13 +302,60 @@ void updateHydrogenFromRenewablesProgram() {
         state.hydrogenTransportSegment = EffectUtils::initialIndex(state.hydrogenTransportDirForward, state.hydrogenTransportSegmentStart, state.hydrogenTransportSegmentEnd);
     }
 
+    if (state.hydrogenTransportOn && state.hydrogenTransportEnabled) {
+        state.hydrogenProductionOn = state.hydrogenProductionEnabled;
+    }
+
+    if (state.hydrogenProductionOn && state.hydrogenProductionEnabled) {
+        if (state.hydrogenProductionEffectType == 1) {
+            fireEffect(state.leds, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+            EffectUtils::advanceIndexDir(
+                state.hydrogenProductionDelay,
+                state.hydrogenProductionSegmentStart,
+                state.hydrogenProductionSegmentEnd,
+                state.hydrogenProductionDirForward,
+                state.hydrogenProductionSegment,
+                timers.previousMillisHydrogenProduction,
+                state.firstRunHydrogenProduction
+            );
+        } else if (state.hydrogenProductionEffectType == 2) {
+            if (state.fadeEffect) {
+                state.fadeEffect->update(
+                    state.leds,
+                    state.hydrogenProductionSegmentStart,
+                    state.hydrogenProductionSegmentEnd,
+                    state.hydrogenProductionColor,
+                    state.firstRunHydrogenProduction,
+                    state.hydrogenProductionDelay
+                );
+            }
+        } else {
+            state.hydrogenProductionSegment = EffectUtils::runSegmentDir(
+                state,
+                state.hydrogenProductionSegmentStart,
+                state.hydrogenProductionSegmentEnd,
+                state.hydrogenProductionColor,
+                dimColor(state.hydrogenProductionColor, state.brightnessDivisor),
+                state.hydrogenProductionDelay,
+                state.hydrogenProductionSegment,
+                timers.previousMillisHydrogenProduction,
+                state.firstRunHydrogenProduction,
+                state.hydrogenProductionDirForward
+            );
+        }
+    } else {
+        EffectUtils::clearRange(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+        state.firstRunHydrogenProduction = true;
+        state.hydrogenProductionSegment = EffectUtils::initialIndex(state.hydrogenProductionDirForward, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
+    }
+
     if (state.hydrogenStorageInOn && state.hydrogenStorageEnabled) {
         state.hydrogenStorageSegment1 = EffectUtils::runSegmentDir(
             state,
             state.hydrogenStorage1SegmentStart,
             state.hydrogenStorage1SegmentEnd,
             state.hydrogenStorage1Color,
-            CRGB(state.hydrogenStorage1Color.r / 10, state.hydrogenStorage1Color.g / 10, state.hydrogenStorage1Color.b / 10),
+            dimColor(state.hydrogenStorage1Color, state.brightnessDivisor),
             state.hydrogenStorage1Delay,
             state.hydrogenStorageSegment1,
             timers.previousMillisHydrogenStorage,
@@ -324,7 +373,7 @@ void updateHydrogenFromRenewablesProgram() {
             state.hydrogenStorage2SegmentStart,
             state.hydrogenStorage2SegmentEnd,
             state.hydrogenStorage2Color,
-            CRGB(state.hydrogenStorage2Color.r / 10, state.hydrogenStorage2Color.g / 10, state.hydrogenStorage2Color.b / 10),
+            dimColor(state.hydrogenStorage2Color, state.brightnessDivisor),
             state.hydrogenStorage2Delay,
             state.hydrogenStorageSegment2,
             timers.previousMillisHydrogenStorage2,
@@ -347,7 +396,7 @@ void updateHydrogenFromRenewablesProgram() {
             state.hydrogenConsumptionSegmentStart,
             state.hydrogenConsumptionSegmentEnd,
             state.h2ConsumptionColor,
-            CRGB(state.h2ConsumptionColor.r / 10, state.h2ConsumptionColor.g / 10, state.h2ConsumptionColor.b / 10),
+            dimColor(state.h2ConsumptionColor, state.brightnessDivisor),
             state.h2ConsumptionDelay,
             state.h2ConsumptionSegment,
             timers.previousMillisH2Consumption,
@@ -394,7 +443,7 @@ void updateHydrogenFromRenewablesProgram() {
                 state.fabricationSegmentStart,
                 state.fabricationSegmentEnd,
                 state.fabricationColor,
-                CRGB(state.fabricationColor.r / 10, state.fabricationColor.g / 10, state.fabricationColor.b / 10),
+                dimColor(state.fabricationColor, state.brightnessDivisor),
                 state.fabricationDelay,
                 state.fabricationSegment,
                 timers.previousMillisFabrication,
@@ -409,8 +458,6 @@ void updateHydrogenFromRenewablesProgram() {
 
     // Disable all later chain states in this mode.
     state.electricityProductionOn = false;
-    state.electrolyserOn = false;
-    state.hydrogenProductionOn = false;
     state.electricityTransportOn = false;
     state.storageTransportOn = false;
     state.storagePowerstationOn = false;
@@ -445,7 +492,7 @@ void updateHydrogenFromStorageProgram() {
             state.hydrogenStorage2SegmentStart,
             state.hydrogenStorage2SegmentEnd,
             state.hydrogenStorage2Color,
-            CRGB(state.hydrogenStorage2Color.r / 10, state.hydrogenStorage2Color.g / 10, state.hydrogenStorage2Color.b / 10),
+            dimColor(state.hydrogenStorage2Color, state.brightnessDivisor),
             state.hydrogenStorage2Delay,
             state.hydrogenStorageSegment2,
             timers.previousMillisHydrogenStorage2,
@@ -473,7 +520,7 @@ void updateHydrogenFromStorageProgram() {
             state.electricityTransportSegmentStart,
             state.electricityTransportSegmentEnd,
             state.electricityTransportColor,
-            CRGB(state.electricityTransportColor.r / 10, state.electricityTransportColor.g / 10, state.electricityTransportColor.b / 10),
+            dimColor(state.electricityTransportColor, state.brightnessDivisor),
             state.electricityTransportDelay,
             state.electricityTransportSegment,
             timers.previousMillisElectricityTransport,
@@ -497,7 +544,7 @@ void updateHydrogenFromStorageProgram() {
             state.storagePowerstationSegmentStart,
             state.storagePowerstationSegmentEnd,
             state.storagePowerstationColor,
-            CRGB(state.storagePowerstationColor.r / 10, state.storagePowerstationColor.g / 10, state.storagePowerstationColor.b / 10),
+            dimColor(state.storagePowerstationColor, state.brightnessDivisor),
             state.storagePowerstationDelay,
             state.storagePowerstationSegment,
             timers.previousMillisStoragePowerstation,
@@ -518,7 +565,7 @@ void updateHydrogenFromStorageProgram() {
             state.hydrogenConsumptionSegmentStart,
             state.hydrogenConsumptionSegmentEnd,
             state.h2ConsumptionColor,
-            CRGB(state.h2ConsumptionColor.r / 10, state.h2ConsumptionColor.g / 10, state.h2ConsumptionColor.b / 10),
+            dimColor(state.h2ConsumptionColor, state.brightnessDivisor),
             state.h2ConsumptionDelay,
             state.h2ConsumptionSegment,
             timers.previousMillisH2Consumption,
@@ -565,7 +612,7 @@ void updateHydrogenFromStorageProgram() {
                 state.fabricationSegmentStart,
                 state.fabricationSegmentEnd,
                 state.fabricationColor,
-                CRGB(state.fabricationColor.r / 10, state.fabricationColor.g / 10, state.fabricationColor.b / 10),
+                dimColor(state.fabricationColor, state.brightnessDivisor),
                 state.fabricationDelay,
                 state.fabricationSegment,
                 timers.previousMillisFabrication,
@@ -580,8 +627,7 @@ void updateHydrogenFromStorageProgram() {
 
     state.hydrogenStorageOn = state.hydrogenStorageInOn || state.hydrogenStorageOutOn;
     state.electricityProductionOn = false;
-    state.electrolyserOn = false;
-    state.hydrogenProductionOn = false;
+    // electrolyserOn and hydrogenProductionOn are latched when solar reaches terminal; do not clear here
     state.storageTransportOn = false;
     state.streetLightOn = false;
 
@@ -598,9 +644,8 @@ void updateRelays() {
 
     // Wind relay follows wind segment state.
     setRelayWind(state.windOn);
-    // Electrolyser relay turns on as soon as solar starts and turns off when wind stops.
-    bool electrolyserRelayOn = state.windOn && state.solarOn;
-    state.electrolyserOn = electrolyserRelayOn;
+    // Electrolyser relay starts after Solar terminal and turns off when wind stops.
+    bool electrolyserRelayOn = state.windOn && state.electrolyserOn;
     setRelayElectrolyser(electrolyserRelayOn);
 }
 
@@ -648,12 +693,15 @@ void checkButtonState() {
                 state.hydrogenStorageInOn = state.hydrogenStorageEnabled;
                 state.hydrogenStorageOutOn = false;
                 state.hydrogenStorageOn = state.hydrogenStorageInOn;
+                state.hydrogenProductionOn = false;
+                state.firstRunHydrogenProduction = true;
                 state.activeProgram = ProgramVariant::HYDROGEN_FROM_STORAGE;
                 timers.storageProgramStartTime = currentMillis;
 
                 // Clear non-drain segments immediately for status/visual feedback.
                 EffectUtils::clearRange(state, state.windSegmentStart, state.windSegmentEnd);
                 EffectUtils::clearRange(state, state.solarSegmentStart, state.solarSegmentEnd);
+                EffectUtils::clearRange(state, state.hydrogenProductionSegmentStart, state.hydrogenProductionSegmentEnd);
                 EffectUtils::clearRange(state, state.hydrogenConsumptionSegmentStart, state.hydrogenConsumptionSegmentEnd);
                 EffectUtils::clearRange(state, state.fabricationSegmentStart, state.fabricationSegmentEnd);
             }
